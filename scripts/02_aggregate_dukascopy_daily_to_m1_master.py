@@ -53,12 +53,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--validation-report",
-        default="reports/data_quality/dukascopy_m1_aggregation_validation.csv",
+        default= "data/capstone_methodology/reports/data_quality/dukascopy_m1_aggregation_validation.csv",
         help="Per-file structural validation report.",
     )
     parser.add_argument(
         "--metadata-json",
-        default="docs/dukascopy_m1_master_metadata.json",
+        default= "data/capstone_methodology/docs/dukascopy_m1_master_metadata.json",
         help="Metadata JSON output file.",
     )
     return parser.parse_args()

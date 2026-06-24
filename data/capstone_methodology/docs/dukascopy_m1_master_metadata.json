@@ -1,0 +1,23 @@
+{
+  "source": "Dukascopy historical XAUUSD M1 BID data retrieved via dukascopy-cli",
+  "raw_daily_directory": "data\\external\\dukascopy\\daily",
+  "daily_files_aggregated": 3186,
+  "daily_files_failed_structural_validation": 0,
+  "rows": 3628970,
+  "columns": [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume"
+  ],
+  "first_timestamp_utc": "2016-01-03 23:00:00+00:00",
+  "last_timestamp_utc": "2026-03-31 23:59:00+00:00",
+  "duplicate_timestamps": 0,
+  "global_gaps_greater_than_1_minute": 4033,
+  "maximum_gap_minutes": 4576.0,
+  "volume_note": "The 'volume' column is retained as Dukascopy-provided BID-side volume. It must not be interpreted as MT5 tick_volume.",
+  "output_csv": "data\\raw\\dukascopy_xauusd_m1_master.csv",
+  "output_parquet": "data\\raw\\dukascopy_xauusd_m1_master.parquet",
+  "validation_report": "reports\\data_quality\\dukascopy_m1_aggregation_validation.csv"
+}
