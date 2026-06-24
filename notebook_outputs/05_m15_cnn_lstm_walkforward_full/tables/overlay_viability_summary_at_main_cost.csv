@@ -1,0 +1,5 @@
+track,feature_set,mode,selected_trade_folds,stay_flat_folds,mean_validation_selected_net_return,mean_validation_selected_sharpe,mean_validation_selected_max_drawdown,mean_validation_selected_trade_count,mean_validation_selected_active_rate,mean_viable_candidates,folds
+tuned_price_only,price_only,tuned,1,2,0.018798180506283863,0.2660758177483644,-0.020891730660246115,175.0,0.262678528201404,1.3333333333333333,3
+tuned_volume_assisted,volume_assisted,tuned,2,1,0.012849277843419197,0.5040083711042067,-0.03923550297019648,287.6666666666667,0.30953058801784433,2.6666666666666665,3
+vanilla_price_only,price_only,vanilla,2,1,0.05347080193604037,0.7274500814937817,-0.07380140917922633,366.6666666666667,0.5282908467189605,3.3333333333333335,3
+vanilla_volume_assisted,volume_assisted,vanilla,2,1,0.027159898731319743,0.37737772011972526,-0.07612042247042365,346.0,0.5280224280131913,1.6666666666666667,3

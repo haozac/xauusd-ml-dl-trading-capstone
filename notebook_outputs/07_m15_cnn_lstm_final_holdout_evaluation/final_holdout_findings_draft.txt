@@ -1,0 +1,33 @@
+Notebook 7 — Final untouched holdout evaluation findings draft
+====================================================================================
+
+Frozen candidate: CNN-LSTM vanilla volume-assisted, M15.
+Final overlay action selected on 2024: trade.
+Final holdout period: 2025-01-02 11:00:00+00:00 to 2026-03-31 20:45:00+00:00.
+
+Classification:
+- ROC-AUC: 0.515827
+- Balanced accuracy: 0.508094
+- Brier improvement versus prevalence baseline: -0.000028
+
+Trading at the main 1.0 bps one-way cost:
+- Net return: -0.130768
+- Gross return: -0.028530
+- Sharpe: -1.558425
+- Sortino: -1.514594
+- Maximum drawdown: -0.151437
+- Trade count: 556
+- Active rate: 0.583950
+- Total drawdown stop triggered: True
+
+Block-bootstrap uncertainty:
+- Primary block length: 5 days
+- 95% total-return interval: [-0.304951, 0.071788]
+- Bootstrap probability of positive total return: 0.1010
+
+Predeclared final status: NEGATIVE.
+
+Research-integrity statement:
+- No architecture, feature, overlay-grid, risk-control, or cost assumption was changed after the holdout was opened.
+- The candidate cannot be replaced after observing this result.
+- Any production refit for MT5 paper trading is a separate deployment artefact, not another holdout test.

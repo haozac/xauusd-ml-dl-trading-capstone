@@ -1,0 +1,130 @@
+{
+  "config_fingerprint": "5bf38ebc705299d479c013c7351fc1252268cbaabeea5a4945a7a3a6b2de2ef9",
+  "critical_config": {
+    "notebook_config_version": "03_lightgbm_harmonised_nested_resume_v1_2026-06-14",
+    "folds": [
+      {
+        "fold": 1,
+        "train_end": "2021-01-01 00:00:00+00:00",
+        "validation_start": "2021-01-01 00:00:00+00:00",
+        "validation_end": "2022-01-01 00:00:00+00:00",
+        "test_start": "2022-01-01 00:00:00+00:00",
+        "test_end": "2023-01-01 00:00:00+00:00"
+      },
+      {
+        "fold": 2,
+        "train_end": "2022-01-01 00:00:00+00:00",
+        "validation_start": "2022-01-01 00:00:00+00:00",
+        "validation_end": "2023-01-01 00:00:00+00:00",
+        "test_start": "2023-01-01 00:00:00+00:00",
+        "test_end": "2024-01-01 00:00:00+00:00"
+      },
+      {
+        "fold": 3,
+        "train_end": "2023-01-01 00:00:00+00:00",
+        "validation_start": "2023-01-01 00:00:00+00:00",
+        "validation_end": "2024-01-01 00:00:00+00:00",
+        "test_start": "2024-01-01 00:00:00+00:00",
+        "test_end": "2025-01-01 00:00:00+00:00"
+      }
+    ],
+    "inner_validation_years": 1,
+    "vanilla_params": {
+      "learning_rate": 0.03,
+      "num_leaves": 31,
+      "max_depth": -1,
+      "min_child_samples": 200,
+      "min_child_weight": 0.001,
+      "feature_fraction": 0.8,
+      "bagging_fraction": 0.8,
+      "bagging_freq": 1,
+      "lambda_l1": 0.0,
+      "lambda_l2": 1.0,
+      "min_gain_to_split": 0.0,
+      "max_bin": 255
+    },
+    "lightgbm_architecture_version": "lightgbm_leafwise_gbdt_nested_v1",
+    "tuning_search_space": {
+      "learning_rate_min": 0.005,
+      "learning_rate_max": 0.1,
+      "num_leaves_min": 8,
+      "num_leaves_max": 128,
+      "max_depth": [
+        -1,
+        3,
+        4,
+        5,
+        6,
+        8,
+        10,
+        12
+      ],
+      "min_child_samples_min": 50,
+      "min_child_samples_max": 2000,
+      "min_child_weight_min": 0.0001,
+      "min_child_weight_max": 10.0,
+      "feature_fraction_min": 0.5,
+      "feature_fraction_max": 1.0,
+      "bagging_fraction_min": 0.5,
+      "bagging_fraction_max": 1.0,
+      "lambda_l1_min": 1e-08,
+      "lambda_l1_max": 50.0,
+      "lambda_l2_min": 1e-08,
+      "lambda_l2_max": 100.0,
+      "min_gain_to_split_min": 0.0,
+      "min_gain_to_split_max": 0.5,
+      "max_bin": [
+        63,
+        127,
+        255
+      ]
+    },
+    "max_boost_rounds": 5000,
+    "early_stopping_rounds": 200,
+    "tuned_n_trials": 150,
+    "lightgbm_n_jobs": 2,
+    "pruner_startup_trials": 15,
+    "pruner_warmup_boost_rounds": 100,
+    "main_selection_cost_bps": 1.0,
+    "cost_grid_bps": [
+      0.0,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      5.0
+    ],
+    "threshold_grid": [
+      [
+        0.51,
+        0.49
+      ],
+      [
+        0.52,
+        0.48
+      ],
+      [
+        0.53,
+        0.47
+      ],
+      [
+        0.55,
+        0.45
+      ]
+    ],
+    "min_hold_grid": [
+      1,
+      2,
+      3
+    ],
+    "max_position_change_events_per_day_grid": [
+      3,
+      5,
+      8
+    ],
+    "daily_loss_stop": -0.02,
+    "total_drawdown_stop": -0.15,
+    "min_validation_trades": 20,
+    "fast_debug": false
+  }
+}

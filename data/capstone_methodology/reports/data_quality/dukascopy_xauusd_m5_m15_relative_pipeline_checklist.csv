@@ -1,0 +1,28 @@
+timeframe,name,status,detail
+ALL,m1_master_loadable,PASS,"rows=3,628,970"
+M5,outputs_loadable,PASS,all required parquet files loaded
+M5,bars_match_independent_m1_resample,PASS,"indexes, columns and values match"
+M5,all_bars_complete,PASS,"rows=724,552"
+M5,variant_indexes_aligned_pre_dropna,PASS,"price_pre=724,552, volume_pre=724,552"
+M5,variant_indexes_aligned_final,PASS,"price_final=720,539, volume_final=720,539"
+M5,raw_ohlcv_excluded_from_model_datasets,PASS,"price_only_raw=[], volume_assisted_raw=[]"
+M5,volume_feature_policy,PASS,"price_has_volume_z20=False, volume_has_volume_z20=True"
+M5,shared_values_match_between_variants,PASS,shared_columns_checked=53
+M5,final_datasets_no_nan_or_inf,PASS,"price_only: missing=0, inf=0; volume_assisted: missing=0, inf=0"
+M5,final_matches_pre_dropna_finalisation,PASS,"price_only=indexes, columns and values match; volume_assisted=indexes, columns and values match"
+M5,targets_do_not_cross_market_gaps,PASS,non_missing_expected_targets=True
+M5,target_returns_recompute_correctly,PASS,max_abs_diff=0.0
+M5,binary_direction_target_consistent,PASS,target_dir equals target_ret_fwd > neutral_threshold (0.0)
+M15,outputs_loadable,PASS,all required parquet files loaded
+M15,bars_match_independent_m1_resample,PASS,"indexes, columns and values match"
+M15,all_bars_complete,PASS,"rows=240,636"
+M15,variant_indexes_aligned_pre_dropna,PASS,"price_pre=240,636, volume_pre=240,636"
+M15,variant_indexes_aligned_final,PASS,"price_final=237,001, volume_final=237,001"
+M15,raw_ohlcv_excluded_from_model_datasets,PASS,"price_only_raw=[], volume_assisted_raw=[]"
+M15,volume_feature_policy,PASS,"price_has_volume_z20=False, volume_has_volume_z20=True"
+M15,shared_values_match_between_variants,PASS,shared_columns_checked=53
+M15,final_datasets_no_nan_or_inf,PASS,"price_only: missing=0, inf=0; volume_assisted: missing=0, inf=0"
+M15,final_matches_pre_dropna_finalisation,PASS,"price_only=indexes, columns and values match; volume_assisted=indexes, columns and values match"
+M15,targets_do_not_cross_market_gaps,PASS,non_missing_expected_targets=True
+M15,target_returns_recompute_correctly,PASS,max_abs_diff=0.0
+M15,binary_direction_target_consistent,PASS,target_dir equals target_ret_fwd > neutral_threshold (0.0)

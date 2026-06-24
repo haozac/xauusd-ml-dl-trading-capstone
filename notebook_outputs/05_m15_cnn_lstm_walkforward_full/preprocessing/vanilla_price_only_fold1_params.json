@@ -1,0 +1,29 @@
+{
+  "model_family": "cnn_lstm",
+  "track": "vanilla_price_only",
+  "fold": 1,
+  "configuration_fingerprint": "1d094f532ba08b52f1495836073504774ad18c1783508b3110407216bb80132e",
+  "selected_params": {
+    "sequence_length": 48,
+    "conv_filters_1": 32,
+    "conv_filters_2": 0,
+    "kernel_size": 3,
+    "dilation_rate_2": 1,
+    "pool_size": 2,
+    "lstm_units": 64,
+    "dropout": 0.2,
+    "l2": 1e-05,
+    "learning_rate": 0.001,
+    "batch_size": 1024,
+    "max_epochs": 40,
+    "patience": 6
+  },
+  "selected_final_epochs": 13,
+  "tuning_info": {
+    "best_inner_validation_auc": 0.5376655983697535,
+    "best_inner_validation_brier": 0.24936288124608455,
+    "best_epoch": 13,
+    "complete_trials": 0,
+    "pruned_trials": 0
+  }
+}

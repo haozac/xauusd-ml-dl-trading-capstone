@@ -1,0 +1,27 @@
+Notebook 3 — Harmonised M15 LightGBM full walk-forward evaluation findings draft
+==========================================================================================
+
+Best risk-gated relative track at 1.0 bps: tuned_volume_assisted
+  Mean ROC-AUC: 0.521729
+  Mean net return: -0.061695
+  Mean Sharpe: -0.756453
+  Selected trade rate: 0.667
+
+Best active track at 1.0 bps: tuned_volume_assisted
+  Mean net return: -0.061695
+  Mean Sharpe: -0.756453
+  Positive fold rate: 0.000
+
+Best classification track: tuned_price_only with mean ROC-AUC 0.521846.
+
+At 1.0 bps, no LightGBM track achieved positive mean net return across folds.
+
+Methodological interpretation:
+- LightGBM hyperparameters and boosting iterations were selected on an inner chronological validation year.
+- The outer validation year was reserved for overlay selection.
+- The test year was evaluated once after the model and overlay were frozen.
+- Persistent Optuna studies and configuration fingerprinting supported reproducible resume behaviour.
+- The final 2025–2026 holdout remained untouched.
+
+Critical note:
+A stronger inner validation AUC is not sufficient evidence of a trading edge. Transaction-cost survival, active fold coverage, fold consistency, drawdown, calibration and validation-to-test decay remain decisive.

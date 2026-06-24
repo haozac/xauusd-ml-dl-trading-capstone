@@ -1,0 +1,5 @@
+track,feature_set,mode,mean_validation_selected_net_return,mean_test_net_return,mean_net_return_decay,mean_validation_selected_sharpe,mean_test_sharpe,mean_sharpe_decay
+tuned_price_only,price_only,tuned,0.0,0.0,0.0,0.0,0.0,0.0
+tuned_volume_assisted,volume_assisted,tuned,0.1148057794935217,-0.08035342814364366,-0.19515920763716535,1.5692973914157087,-1.417921566715238,-2.987218958130947
+vanilla_price_only,price_only,vanilla,0.052048245217496625,-0.0577699150358042,-0.10981816025330082,0.6875105965879973,-1.2115739927075075,-1.899084589295505
+vanilla_volume_assisted,volume_assisted,vanilla,0.029982123245377117,-0.03858643648594118,-0.0685685597313183,0.41607834122384385,-0.5719390816410602,-0.9880174228649041

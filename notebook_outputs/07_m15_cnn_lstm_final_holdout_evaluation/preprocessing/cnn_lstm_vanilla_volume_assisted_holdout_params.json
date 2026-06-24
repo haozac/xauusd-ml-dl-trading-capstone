@@ -1,0 +1,27 @@
+{
+  "model_family": "cnn_lstm",
+  "track": "vanilla_volume_assisted",
+  "frozen_params": {
+    "sequence_length": 48,
+    "conv_filters_1": 32,
+    "conv_filters_2": 0,
+    "kernel_size": 3,
+    "dilation_rate_2": 1,
+    "pool_size": 2,
+    "lstm_units": 64,
+    "dropout": 0.2,
+    "l2": 1e-05,
+    "learning_rate": 0.001,
+    "batch_size": 1024,
+    "max_epochs": 40,
+    "patience": 6
+  },
+  "selected_epoch": 10,
+  "training_period_end_exclusive": "2024-01-01 00:00:00+00:00",
+  "training_rows": 184584,
+  "training_sequences": 83592,
+  "model_parameter_count": 29825,
+  "training_seconds": 72.68611145019531,
+  "seed": 42,
+  "config_fingerprint": "55b349c6d957d26e528c0546c78fb7363bf515a93ce705c6a4c0e97862aff326"
+}

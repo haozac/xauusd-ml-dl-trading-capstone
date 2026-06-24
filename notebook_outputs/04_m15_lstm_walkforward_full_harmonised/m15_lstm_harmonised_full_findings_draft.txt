@@ -1,0 +1,23 @@
+Notebook 4 — Harmonised M15 LSTM full walk-forward evaluation findings draft
+====================================================================================
+
+Best relative track at 1.0 bps: tuned_price_only
+  Mean ROC-AUC: 0.518844
+  Mean net return: 0.000000
+  Mean Sharpe: 0.000000
+  Positive fold rate: 0.000
+
+Best classification track: vanilla_price_only with mean ROC-AUC 0.522127.
+
+At 1.0 bps, no LSTM track achieved positive mean net return across folds.
+
+Methodological interpretation:
+- Neural hyperparameters were selected on an inner chronological validation year inside the outer training period.
+- The outer validation year was reserved for overlay selection.
+- The test year was evaluated once after the model and overlay were frozen.
+- Sequence windows crossing non-contiguous M15 gaps were excluded.
+- Persistent Optuna studies and configuration fingerprinting supported reproducible resume behaviour.
+- The final 2025–2026 holdout remained untouched.
+
+Critical note:
+LSTM complexity is justified only if recurrent sequence modelling improves unseen test performance. A better validation score alone is not evidence of a trading edge. Transaction-cost survival, fold consistency, drawdown and validation-to-test decay remain decisive.

@@ -1,0 +1,3 @@
+timeframe,folds,validation_viable_folds,validation_viable_rate,forced_mean_test_net_return,gated_mean_test_net_return,forced_positive_fold_rate,gated_positive_fold_rate
+M15,3,1,0.16666666666666666,-0.05478662155155389,-0.004590546961526239,0.16666666666666666,0.0
+M5,3,1,0.16666666666666666,-0.11140047978461526,-0.020977995718987008,0.16666666666666666,0.0

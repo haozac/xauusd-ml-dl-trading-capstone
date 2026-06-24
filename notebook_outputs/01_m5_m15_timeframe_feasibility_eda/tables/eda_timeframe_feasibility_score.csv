@@ -1,0 +1,3 @@
+timeframe,rows,mean_abs_return_bps,gaps_per_30_calendar_days,approx_direction_flips_per_24h_if_always_in_market,min_fold_rows,avg_max_feature_psi,score_rows,score_return_magnitude,score_gap_frequency,score_turnover_pressure,score_fold_sufficiency,score_feature_drift,eda_feasibility_score_equal_weight
+M5,720539,3.624222850524283,30.0799067151535,148.37692338652036,70003,0.2524431044537964,1.0,0.0,0.0,0.0,1.0,1.0,0.5
+M15,237001,6.248667713345729,27.537203064813966,49.592094548124265,22985,0.2691814961996323,0.0,1.0,1.0,1.0,0.0,0.0,0.5

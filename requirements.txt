@@ -1,0 +1,3 @@
+# Default reproducible environment for the official research notebooks.
+# Deployment uses requirements-deployment.txt.
+-r requirements-research.txt

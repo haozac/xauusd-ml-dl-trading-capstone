@@ -1,0 +1,32 @@
+{
+  "notebook_config_version": "06_cross_model_selection_v1_2026-06-17",
+  "selection_tier": "strict",
+  "model_family": "CNN-LSTM",
+  "model_family_key": "cnn_lstm",
+  "track": "vanilla_volume_assisted",
+  "feature_set": "volume_assisted",
+  "mode": "vanilla",
+  "main_cost_bps": 1.0,
+  "development_metrics": {
+    "mean_net_return_0bps": 0.1037137776297017,
+    "mean_net_return_0_5bps": 0.0656652103486629,
+    "mean_net_return_1bps": 0.02257780197882,
+    "mean_sharpe_1bps": -0.0397171178647076,
+    "mean_max_drawdown_1bps": -0.095157824462568,
+    "positive_fold_count_1bps": 1,
+    "active_fold_count": 2,
+    "worst_fold_net_return_1bps": -0.1297952970346481,
+    "mean_roc_auc": 0.5171662226268449,
+    "breakeven_cost_bps": 1.5449210024856597
+  },
+  "caution_flags": [
+    "Only one of three development test folds was profitable at 1.0 bps.",
+    "The worst development fold lost at least 10%.",
+    "Mean development Sharpe at 1.0 bps was not positive.",
+    "At least one development fold triggered the total drawdown stop.",
+    "Estimated one-way break-even cost remained below 2 bps.",
+    "The validation gate selected stay-flat in at least one development fold."
+  ],
+  "final_holdout_status": "untouched",
+  "next_stage": "Notebook 7 final untouched holdout evaluation"
+}

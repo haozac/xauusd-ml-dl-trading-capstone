@@ -1,0 +1,23 @@
+Notebook 5 — M15 CNN-LSTM full walk-forward evaluation findings draft
+====================================================================================
+
+Best relative track at 1.0 bps: tuned_price_only
+  Mean ROC-AUC: 0.521358
+  Mean net return: 0.003357
+  Mean Sharpe: 0.045856
+  Positive fold rate: 0.333
+
+Best classification track: tuned_volume_assisted with mean ROC-AUC 0.522854.
+
+At 1.0 bps, positive mean-net-return tracks: tuned_price_only, vanilla_volume_assisted.
+
+Methodological interpretation:
+- Neural hyperparameters were selected on an inner chronological validation year inside the outer training period.
+- The outer validation year was reserved for overlay selection.
+- The test year was evaluated once after the model and overlay were frozen.
+- Sequence windows crossing non-contiguous M15 gaps were excluded.
+- Persistent Optuna studies and configuration fingerprinting supported reproducible resume behaviour.
+- The final 2025–2026 holdout remained untouched.
+
+Critical note:
+CNN-LSTM complexity is justified only if local convolutional motifs plus longer recurrent dependence improve unseen test performance. A better validation score alone is not evidence of a trading edge. Transaction-cost survival, fold consistency, drawdown and validation-to-test decay remain decisive.

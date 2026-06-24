@@ -1,0 +1,3 @@
+timeframe,bar_minutes,bars,first_timestamp_utc,last_timestamp_utc,non_contiguous_gaps,gaps_per_10k_bars,gaps_per_30_calendar_days,max_gap_minutes,median_gap_minutes
+M5,5,724552,2016-01-03 23:05:00+00:00,2026-04-01 00:00:00+00:00,3750,51.75611964358666,30.0799067151535,4585.0,65.0
+M15,15,240636,2016-01-03 23:15:00+00:00,2026-04-01 00:00:00+00:00,3433,142.6636081051879,27.537203064813966,4605.0,75.0

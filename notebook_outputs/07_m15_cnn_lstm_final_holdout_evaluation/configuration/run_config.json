@@ -1,0 +1,83 @@
+{
+  "config_fingerprint": "55b349c6d957d26e528c0546c78fb7363bf515a93ce705c6a4c0e97862aff326",
+  "critical_config": {
+    "notebook_config_version": "07_final_holdout_v1_2026-06-17",
+    "expected_candidate": {
+      "model_family": "CNN-LSTM",
+      "model_family_key": "cnn_lstm",
+      "track": "vanilla_volume_assisted",
+      "feature_set": "volume_assisted",
+      "mode": "vanilla"
+    },
+    "expected_frozen_params": {
+      "sequence_length": 48,
+      "conv_filters_1": 32,
+      "conv_filters_2": 0,
+      "kernel_size": 3,
+      "dilation_rate_2": 1,
+      "pool_size": 2,
+      "lstm_units": 64,
+      "dropout": 0.2,
+      "l2": 1e-05,
+      "learning_rate": 0.001,
+      "batch_size": 1024,
+      "max_epochs": 40,
+      "patience": 6
+    },
+    "inner_train_end": "2023-01-01 00:00:00+00:00",
+    "inner_validation_start": "2023-01-01 00:00:00+00:00",
+    "inner_validation_end": "2024-01-01 00:00:00+00:00",
+    "final_train_end": "2024-01-01 00:00:00+00:00",
+    "overlay_validation_start": "2024-01-01 00:00:00+00:00",
+    "overlay_validation_end": "2025-01-01 00:00:00+00:00",
+    "final_holdout_start": "2025-01-01 00:00:00+00:00",
+    "final_holdout_end_exclusive": "2026-04-01 00:00:00+00:00",
+    "main_selection_cost_bps": 1.0,
+    "cost_grid_bps": [
+      0.0,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      5.0
+    ],
+    "threshold_grid": [
+      [
+        0.51,
+        0.49
+      ],
+      [
+        0.52,
+        0.48
+      ],
+      [
+        0.53,
+        0.47
+      ],
+      [
+        0.55,
+        0.45
+      ]
+    ],
+    "min_hold_grid": [
+      1,
+      2,
+      3
+    ],
+    "max_position_change_events_per_day_grid": [
+      3,
+      5,
+      8
+    ],
+    "daily_loss_stop": -0.02,
+    "total_drawdown_stop": -0.15,
+    "min_validation_trades": 20,
+    "bootstrap_replications": 2000,
+    "primary_bootstrap_block_days": 5,
+    "bootstrap_block_sensitivity": [
+      5,
+      10,
+      20
+    ]
+  }
+}

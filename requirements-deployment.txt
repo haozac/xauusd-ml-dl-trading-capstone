@@ -1,0 +1,29 @@
+# Preliminary Windows deployment environment.
+# Finalise this file after the deployment architecture and monitoring stack
+# have been approved. Do not add dashboard or service frameworks prematurely.
+#
+# Recommended Python version: 3.11
+# Platform: Windows with a locally installed MetaTrader 5 terminal
+
+# MT5 connector
+MetaTrader5==5.0.5735
+
+# Frozen Notebook 7 model and preprocessing compatibility
+tensorflow==2.20.0
+keras==3.13.2
+scikit-learn==1.6.1
+numpy>=1.26,<2.3
+pandas>=2.2,<3.0
+joblib>=1.3,<2.0
+
+# Market-data and configuration support
+pyarrow>=15,<23
+python-dotenv>=1.0,<2.0
+PyYAML>=6.0,<7.0
+tzdata>=2025.1
+
+# Testing
+pytest>=8.0,<9.0
+
+# SQLite is provided by the Python standard library.
+# Add monitoring dependencies only after the final deployment design is frozen.

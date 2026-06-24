@@ -1,0 +1,5 @@
+timeframe,variant,rows_pre_dropna,rows_final,columns_final,feature_count,target_0_rows,target_1_rows,target_1_rate,mean_target_return_bps,mean_abs_target_return_bps,std_target_return_bps,saved_to
+M5,price_only,724552,720539,53,50,361326,359213,0.4985337365499994,0.009117444748390153,3.624222850524283,5.905336834820711,data\capstone_methodology\processed\dukascopy_xauusd_m5_price_only_relative_dataset.parquet
+M5,volume_assisted,724552,720539,54,51,361326,359213,0.4985337365499994,0.009117444748390153,3.624222850524283,5.905336834820711,data\capstone_methodology\processed\dukascopy_xauusd_m5_volume_assisted_relative_dataset.parquet
+M15,price_only,240636,237001,53,50,118189,118812,0.5013143404458209,0.021989419984613304,6.248667713345729,10.199066515582771,data\capstone_methodology\processed\dukascopy_xauusd_m15_price_only_relative_dataset.parquet
+M15,volume_assisted,240636,237001,54,51,118189,118812,0.5013143404458209,0.021989419984613304,6.248667713345729,10.199066515582771,data\capstone_methodology\processed\dukascopy_xauusd_m15_volume_assisted_relative_dataset.parquet

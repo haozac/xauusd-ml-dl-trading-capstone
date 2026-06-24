@@ -1,0 +1,16 @@
+{
+  "selected_action": "trade",
+  "upper_threshold": 0.53,
+  "lower_threshold": 0.47,
+  "min_hold_bars": 3,
+  "max_position_change_events_per_day": 3,
+  "validation_selected_net_return": 0.07219242980088558,
+  "validation_selected_sharpe": 1.1357709572573076,
+  "validation_selected_max_drawdown": -0.12186382790517891,
+  "validation_selected_trade_count": 521,
+  "validation_selected_active_rate": 0.6825079509313948,
+  "validation_viable_candidates": 1,
+  "selection_period_start": "2024-01-01 00:00:00+00:00",
+  "selection_period_end_exclusive": "2025-01-01 00:00:00+00:00",
+  "selection_cost_bps": 1.0
+}

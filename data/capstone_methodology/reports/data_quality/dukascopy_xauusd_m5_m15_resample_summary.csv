@@ -1,0 +1,3 @@
+timeframe,bar_minutes,candidate_bars,bars_with_ohlc,complete_bars,incomplete_bars_removed,first_timestamp_utc,last_timestamp_utc,non_contiguous_bar_gaps,maximum_bar_gap_minutes
+M5,5,1077132,726229,724552,1677,2016-01-03 23:05:00+00:00,2026-04-01 00:00:00+00:00,3750,4585.0
+M15,15,359044,242126,240636,1490,2016-01-03 23:15:00+00:00,2026-04-01 00:00:00+00:00,3433,4605.0

@@ -1,0 +1,17 @@
+
+EDA summary draft
+=================
+
+1. The regenerated M5 and M15 datasets passed the integrity gate before EDA. This supports using them for timeframe feasibility analysis.
+
+2. M5 provides substantially more model-ready observations (720,539) than M15 (237,001), which is beneficial for model estimation, especially for sequence-based models.
+
+3. M15 has a larger mean absolute next-bar return (6.25 bps) than M5 (3.62 bps). This may make M15 more resilient to transaction costs, although it has fewer observations.
+
+4. The binary direction target is close to balanced in both timeframes: M5 up-rate = 0.4985; M15 up-rate = 0.5013. Therefore, accuracy alone is not sufficient for later model evaluation.
+
+5. The monthly bar-count view uses effective-month assignment for right-labelled bars and includes a relative-to-median coverage index, so it should not be misread as April 2026 coverage or as a direct raw-count comparison between M5 and M15.
+
+6. The cost-to-return profile and turnover proxy should be treated as important screening evidence. A timeframe with more rows is not automatically better if expected movement is too small relative to trading costs.
+
+7. The equal-weight EDA score does not produce a decisive timeframe winner. This should not be treated as final model selection. The next notebook should run a lightweight walk-forward LightGBM benchmark on M5 and M15 before selecting the final modelling timeframe.

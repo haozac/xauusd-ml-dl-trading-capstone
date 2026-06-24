@@ -1,0 +1,8 @@
+{
+  "final_status": "PASS",
+  "checks_run": 27,
+  "checks_passed": 27,
+  "checks_failed": 0,
+  "failed_checks": [],
+  "scope": "This verification checks internal consistency from M1 master to M5/M15 complete bars, relative model datasets, target alignment and feature policy. It does not compare prices against a second market-data provider."
+}

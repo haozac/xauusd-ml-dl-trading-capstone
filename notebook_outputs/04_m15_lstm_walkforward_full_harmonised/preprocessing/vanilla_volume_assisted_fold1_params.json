@@ -1,0 +1,26 @@
+{
+  "model_family": "lstm",
+  "track": "vanilla_volume_assisted",
+  "fold": 1,
+  "configuration_fingerprint": "ea940c219a22cda55467add97eae5aa8482cca9212ba5c2f213070ef98984e2e",
+  "selected_params": {
+    "sequence_length": 48,
+    "units_1": 64,
+    "use_second_layer": false,
+    "units_2": 0,
+    "dropout": 0.2,
+    "l2": 1e-05,
+    "learning_rate": 0.001,
+    "batch_size": 1024,
+    "max_epochs": 40,
+    "patience": 6
+  },
+  "selected_final_epochs": 2,
+  "tuning_info": {
+    "best_inner_validation_auc": 0.5410735819487458,
+    "best_inner_validation_brier": 0.2492819656068491,
+    "best_epoch": 2,
+    "complete_trials": 0,
+    "pruned_trials": 0
+  }
+}

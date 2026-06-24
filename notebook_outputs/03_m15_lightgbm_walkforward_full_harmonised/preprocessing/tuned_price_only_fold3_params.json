@@ -1,0 +1,38 @@
+{
+  "model_family": "lightgbm",
+  "track": "tuned_price_only",
+  "fold": 3,
+  "configuration_fingerprint": "5bf38ebc705299d479c013c7351fc1252268cbaabeea5a4945a7a3a6b2de2ef9",
+  "selected_params": {
+    "bagging_fraction": 0.7895300607881081,
+    "bagging_freq": 1,
+    "feature_fraction": 0.5135719906649792,
+    "lambda_l1": 0.002246059895282413,
+    "lambda_l2": 1.4466219802713159e-05,
+    "learning_rate": 0.07232915301326062,
+    "max_bin": 127,
+    "max_depth": -1,
+    "min_child_samples": 51,
+    "min_child_weight": 0.15357636213291617,
+    "min_gain_to_split": 0.013187903974918615,
+    "num_leaves": 40
+  },
+  "selected_best_iteration": 158,
+  "tuning_info": {
+    "track": "tuned_price_only",
+    "fold": 3,
+    "study_name": "lightgbm_harmonised_tuned_price_only_fold3_5bf38ebc7052",
+    "database_path": "/content/drive/MyDrive/fyp_master_starter/data/capstone_methodology/notebook_outputs/03_m15_lightgbm_walkforward_full_harmonised/optuna_studies/tuned_price_only_fold3.sqlite3",
+    "target_trials": 150,
+    "finished_trials": 150,
+    "complete_trials": 107,
+    "pruned_trials": 43,
+    "failed_trials": 0,
+    "best_trial_number": 142,
+    "best_inner_validation_auc": 0.5272099030997883,
+    "best_inner_validation_brier": 0.2500085539727681,
+    "best_inner_validation_log_loss": 0.6931894379542545,
+    "best_iteration": 158,
+    "best_params_json": "{\"bagging_fraction\": 0.7895300607881081, \"bagging_freq\": 1, \"feature_fraction\": 0.5135719906649792, \"lambda_l1\": 0.002246059895282413, \"lambda_l2\": 1.4466219802713159e-05, \"learning_rate\": 0.07232915301326062, \"max_bin\": 127, \"max_depth\": -1, \"min_child_samples\": 51, \"min_child_weight\": 0.15357636213291617, \"min_gain_to_split\": 0.013187903974918615, \"num_leaves\": 40}"
+  }
+}

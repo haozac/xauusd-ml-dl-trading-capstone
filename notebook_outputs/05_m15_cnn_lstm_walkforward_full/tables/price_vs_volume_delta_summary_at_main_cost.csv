@@ -1,0 +1,3 @@
+mode,delta_roc_auc_volume_minus_price,delta_net_return_volume_minus_price,delta_sharpe_volume_minus_price,delta_max_drawdown_volume_minus_price
+vanilla,-0.003183673591843461,0.10804825525111865,1.9965176722468743,0.0052117908712927125
+tuned,0.0014959862204424468,-0.05211504154388591,-1.021561028859339,-0.017673264432752522

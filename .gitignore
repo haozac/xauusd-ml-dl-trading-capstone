@@ -1,0 +1,184 @@
+# =========================================================
+# Python bytecode, caches, builds, and packaging
+# =========================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# =========================================================
+# Python virtual environments and local interpreters
+# =========================================================
+.venv/
+.venv-*/
+venv/
+env/
+ENV/
+.python-version
+
+# =========================================================
+# Jupyter
+# =========================================================
+.ipynb_checkpoints/
+.jupyter/
+.jupyter_cache/
+
+# =========================================================
+# Environment variables, credentials, and private keys
+# =========================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+secrets/
+private/
+config/local*.yml
+config/local*.yaml
+config/local*.json
+
+# =========================================================
+# IDE and operating-system files
+# =========================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================================================
+# Raw, interim, and processed datasets
+# Keep only README files and placeholders
+# =========================================================
+data/raw/**
+!data/raw/README.md
+!data/raw/.gitkeep
+
+data/interim/**
+!data/interim/README.md
+!data/interim/.gitkeep
+
+data/processed/**
+!data/processed/README.md
+!data/processed/.gitkeep
+
+data/external/**
+!data/external/README.md
+!data/external/.gitkeep
+
+# Official capstone generated datasets
+data/capstone_methodology/raw/**
+data/capstone_methodology/interim/**
+data/capstone_methodology/processed/**
+data/capstone_methodology/cache/**
+data/capstone_methodology/checkpoints/**
+
+# Keep official metadata and data-quality evidence under:
+# data/capstone_methodology/docs/
+# data/capstone_methodology/reports/
+
+# =========================================================
+# Large data formats
+# =========================================================
+*.parquet
+*.feather
+*.hdf5
+*.h5
+*.npy
+*.npz
+
+# =========================================================
+# Models, preprocessing artefacts, and training checkpoints
+# Store outside Git or publish separately with recorded hashes
+# =========================================================
+models/
+checkpoints/
+artifacts/
+optuna_storage/
+optuna_studies/
+*.pkl
+*.pickle
+*.joblib
+*.keras
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.tflite
+
+# Keep documentation placeholders if these directories are created
+!models/README.md
+!artifacts/README.md
+
+# =========================================================
+# Notebook and experiment runtime artefacts
+# =========================================================
+**/optuna_studies/
+**/checkpoints/
+**/tensorboard/
+**/training_logs/
+events.out.tfevents.*
+
+# =========================================================
+# Deployment runtime state and account-specific outputs
+# =========================================================
+deployment/runtime/
+deployment/state/
+deployment/logs/
+deployment/database/
+deployment/databases/
+deployment/exports/private/
+runtime/
+state/
+logs/
+*.jsonl
+*.pid
+*.lock
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# =========================================================
+# Temporary files and local exports
+# =========================================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.log
+
+# =========================================================
+# Archives and local backups
+# =========================================================
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# =========================================================
+# Local reports or files containing account details
+# =========================================================
+account_info*.json
+broker_info*.json
+mt5_terminal_info*.json
+order_history*.csv
+deal_history*.csv

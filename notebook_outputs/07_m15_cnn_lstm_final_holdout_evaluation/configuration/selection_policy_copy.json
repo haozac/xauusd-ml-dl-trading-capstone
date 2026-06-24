@@ -1,0 +1,24 @@
+{
+  "strict_eligibility": {
+    "mean_net_return_1bps_gt": 0.0,
+    "mean_net_return_0_5bps_gt": 0.0,
+    "minimum_active_folds": 2,
+    "minimum_positive_folds": 1,
+    "mean_max_drawdown_gt": -0.15,
+    "exclude_all_stay_flat": true
+  },
+  "lexicographic_ranking": [
+    "mean_net_return_1bps_desc",
+    "positive_fold_count_desc",
+    "worst_fold_net_return_desc",
+    "mean_absolute_validation_to_test_decay_asc",
+    "mean_max_drawdown_desc",
+    "turnover_units_per_day_asc",
+    "mean_roc_auc_desc"
+  ],
+  "fallback_tiers": [
+    "positive at 0.5 bps with at least two active folds",
+    "positive at 0 bps with at least two active folds",
+    "best active track with at least two active folds"
+  ]
+}

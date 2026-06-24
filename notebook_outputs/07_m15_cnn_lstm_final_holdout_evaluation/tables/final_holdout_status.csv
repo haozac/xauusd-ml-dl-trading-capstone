@@ -1,0 +1,2 @@
+holdout_status,selected_action,net_return_1bps,sharpe_1bps,max_drawdown_1bps,trade_count_1bps,total_drawdown_stop_triggered,bootstrap_probability_positive_return_primary
+NEGATIVE,trade,-0.13076774997111007,-1.5584254288782298,-0.1514368066367363,556,True,0.101

@@ -1,0 +1,12 @@
+figure,png,svg,suggested_caption
+Cost sensitivity,figures/final_holdout_cost_sensitivity.png,figures/final_holdout_cost_sensitivity.svg,Final holdout total return under the frozen overlay across predeclared one-way transaction-cost assumptions.
+Equity by cost,figures/final_holdout_equity_by_cost.png,figures/final_holdout_equity_by_cost.svg,"Final holdout equity curves at 0, 0.5 and 1.0 bps one-way cost."
+Gross versus net equity,figures/final_holdout_gross_vs_net_equity_1bps.png,figures/final_holdout_gross_vs_net_equity_1bps.svg,Difference between frictionless and cost-adjusted final holdout equity under the frozen strategy.
+Drawdown,figures/final_holdout_drawdown_1bps.png,figures/final_holdout_drawdown_1bps.svg,Final holdout drawdown path at the main 1.0 bps cost assumption.
+Monthly returns,figures/final_holdout_monthly_returns_1bps.png,figures/final_holdout_monthly_returns_1bps.svg,Monthly cost-adjusted returns during the final untouched holdout.
+ROC curve,figures/final_holdout_roc_curve.png,figures/final_holdout_roc_curve.svg,Directional ranking performance of the frozen CNN-LSTM on the final untouched holdout.
+Calibration curve,figures/final_holdout_calibration_curve.png,figures/final_holdout_calibration_curve.svg,Calibration of upward-direction probabilities on the final untouched holdout.
+Confusion matrix,figures/final_holdout_confusion_matrix.png,figures/final_holdout_confusion_matrix.svg,Final holdout classification counts using the conventional 0.5 probability threshold.
+Probability distributions,figures/final_holdout_probability_distribution_by_class.png,figures/final_holdout_probability_distribution_by_class.svg,Distribution of predicted upward probabilities by realised next-bar direction.
+Daily return distribution,figures/final_holdout_daily_return_distribution_1bps.png,figures/final_holdout_daily_return_distribution_1bps.svg,Distribution of daily cost-adjusted returns on the final untouched holdout.
+Block-bootstrap return distribution,figures/final_holdout_block_bootstrap_total_return.png,figures/final_holdout_block_bootstrap_total_return.svg,Moving-block bootstrap distribution of total final holdout return using daily return blocks.

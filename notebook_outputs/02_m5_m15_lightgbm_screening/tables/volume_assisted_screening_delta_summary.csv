@@ -1,0 +1,3 @@
+timeframe,delta_roc_auc_volume_minus_price,delta_balanced_accuracy_volume_minus_price,delta_net_return_volume_minus_price,delta_sharpe_volume_minus_price,delta_turnover_volume_minus_price
+M15,0.0005449928680055782,0.0013546908887247522,0.04166561935403686,0.3802499828100831,50.666666666666515
+M5,0.0002800642210006865,-0.0003470284461042361,0.07054560248900739,0.9622128293108797,330.0

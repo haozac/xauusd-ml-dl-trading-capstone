@@ -1,0 +1,38 @@
+{
+  "model_family": "cnn_lstm",
+  "track": "tuned_volume_assisted",
+  "fold": 3,
+  "configuration_fingerprint": "1d094f532ba08b52f1495836073504774ad18c1783508b3110407216bb80132e",
+  "selected_params": {
+    "batch_size": 512,
+    "conv_filters_1": 32,
+    "conv_filters_2": 0,
+    "dilation_rate_2": 1,
+    "dropout": 0.2,
+    "kernel_size": 5,
+    "l2": 5.144130804344434e-05,
+    "learning_rate": 0.0013988910842740953,
+    "lstm_units": 64,
+    "max_epochs": 35,
+    "patience": 5,
+    "pool_size": 1,
+    "sequence_length": 48
+  },
+  "selected_final_epochs": 10,
+  "tuning_info": {
+    "track": "tuned_volume_assisted",
+    "fold": 3,
+    "study_name": "cnn_lstm_tuned_volume_assisted_fold3_1d094f532ba0",
+    "database_path": "/content/drive/MyDrive/fyp_master_starter/data/capstone_methodology/notebook_outputs/05_m15_cnn_lstm_walkforward_full/optuna_studies/tuned_volume_assisted_fold3.sqlite3",
+    "target_trials": 24,
+    "finished_trials": 24,
+    "complete_trials": 16,
+    "pruned_trials": 8,
+    "failed_trials": 0,
+    "best_trial_number": 15,
+    "best_inner_validation_auc": 0.5294266691740244,
+    "best_inner_validation_brier": 0.24974983011805613,
+    "best_epoch": 10,
+    "best_params_json": "{\"batch_size\": 512, \"conv_filters_1\": 32, \"conv_filters_2\": 0, \"dilation_rate_2\": 1, \"dropout\": 0.2, \"kernel_size\": 5, \"l2\": 5.144130804344434e-05, \"learning_rate\": 0.0013988910842740953, \"lstm_units\": 64, \"max_epochs\": 35, \"patience\": 5, \"pool_size\": 1, \"sequence_length\": 48}"
+  }
+}

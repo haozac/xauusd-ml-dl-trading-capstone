@@ -1,0 +1,2 @@
+selected_action,upper_threshold,lower_threshold,min_hold_bars,max_position_change_events_per_day,validation_selected_net_return,validation_selected_sharpe,validation_selected_max_drawdown,validation_selected_trade_count,validation_selected_active_rate,validation_viable_candidates,selection_period_start,selection_period_end_exclusive,selection_cost_bps
+trade,0.53,0.47,3,3,0.07219242980088558,1.1357709572573076,-0.12186382790517891,521,0.6825079509313948,1,2024-01-01 00:00:00+00:00,2025-01-01 00:00:00+00:00,1.0

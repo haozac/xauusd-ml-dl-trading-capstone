@@ -1,0 +1,29 @@
+{
+  "model_family": "lightgbm",
+  "track": "vanilla_price_only",
+  "fold": 2,
+  "configuration_fingerprint": "5bf38ebc705299d479c013c7351fc1252268cbaabeea5a4945a7a3a6b2de2ef9",
+  "selected_params": {
+    "learning_rate": 0.03,
+    "num_leaves": 31,
+    "max_depth": -1,
+    "min_child_samples": 200,
+    "min_child_weight": 0.001,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l1": 0.0,
+    "lambda_l2": 1.0,
+    "min_gain_to_split": 0.0,
+    "max_bin": 255
+  },
+  "selected_best_iteration": 200,
+  "tuning_info": {
+    "best_inner_validation_auc": 0.5360500854548891,
+    "best_inner_validation_brier": 0.2489503158846037,
+    "best_inner_validation_log_loss": 0.6910383666430246,
+    "best_iteration": 200,
+    "complete_trials": 0,
+    "pruned_trials": 0
+  }
+}

@@ -1,0 +1,44 @@
+Notebook 2 LightGBM timeframe-screening findings
+=================================================
+
+Purpose
+-------
+This notebook benchmarks M5 and M15 using a lightweight fixed-parameter LightGBM classifier. The purpose is timeframe screening, not final model selection.
+
+Final holdout protection
+------------------------
+The final holdout beginning 2025-01-01 was not used. All benchmark folds ended before the final holdout.
+
+Main screening-cost assumption
+------------------------------
+The main decision table uses 1.0 bps one-way cost. Full cost sensitivity from 0.0 to 5.0 bps is saved separately.
+
+Timeframe-level forced-trading result
+-------------------------------------
+- M15: screening score=0.8500, mean ROC-AUC=0.5213, mean net return at 1.0 bps=-0.0548, positive fold rate=0.17, mean turnover=1219.0
+- M5: screening score=0.1500, mean ROC-AUC=0.5170, mean net return at 1.0 bps=-0.1114, positive fold rate=0.17, mean turnover=922.0
+
+Validation-viability diagnostic
+-------------------------------
+- M15: validation-viable fold rate=0.17, forced mean test net return=-0.0548, gated mean test net return=-0.0046, gated positive fold rate=0.00
+- M5: validation-viable fold rate=0.17, forced mean test net return=-0.1114, gated mean test net return=-0.0210, gated positive fold rate=0.00
+
+Best forced-trading track at the main screening cost
+----------------------------------------------------
+The best feature-level track by mean test net return was M15 / volume_assisted.
+Mean test ROC-AUC: 0.5216
+Mean test net return at 1.0 bps: -0.0340
+Mean test Sharpe: -0.3574
+Positive fold rate: 0.33
+
+Profitability warning
+---------------------
+At the main screening cost, all feature-level tracks have negative mean net return. Therefore, Notebook 2 should not be interpreted as evidence that the strategy is profitable. It only indicates that M15 is the stronger timeframe candidate for the next modelling stage.
+
+Interpretation warning
+----------------------
+A timeframe should not be selected from one metric alone. The preferred timeframe should show reasonable classification discrimination, cost-adjusted trading performance, positive fold consistency, and acceptable turnover/drawdown. If the stronger timeframe still has negative mean net return and weak positive-fold consistency, the correct conclusion is not that the strategy is ready, but that the selected timeframe is the more defensible candidate for the full model comparison.
+
+Suggested next step
+-------------------
+If the relative comparison is stable, select the stronger timeframe for the full LightGBM/LSTM/CNN-LSTM methodology. However, do not claim profitability from this notebook. The next modelling notebooks must test whether stronger modelling and tuned configurations can improve robustness under walk-forward evaluation and realistic cost controls.

@@ -1,0 +1,25 @@
+feature_set,fold,role,start,end,rows
+price_only,1,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2019-12-31 21:45:00+00:00,91668
+price_only,1,inner_model_tuning_validation,2020-01-01 23:15:00+00:00,2020-12-31 21:45:00+00:00,23327
+price_only,1,outer_overlay_validation,2021-01-03 23:15:00+00:00,2021-12-31 21:45:00+00:00,23314
+price_only,1,unseen_test,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+price_only,2,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2020-12-31 21:45:00+00:00,114995
+price_only,2,inner_model_tuning_validation,2021-01-03 23:15:00+00:00,2021-12-31 21:45:00+00:00,23314
+price_only,2,outer_overlay_validation,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+price_only,2,unseen_test,2023-01-02 23:30:00+00:00,2023-12-29 21:30:00+00:00,22985
+price_only,3,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2021-12-31 21:45:00+00:00,138309
+price_only,3,inner_model_tuning_validation,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+price_only,3,outer_overlay_validation,2023-01-02 23:30:00+00:00,2023-12-29 21:30:00+00:00,22985
+price_only,3,unseen_test,2024-01-01 23:15:00+00:00,2024-12-31 21:30:00+00:00,23382
+volume_assisted,1,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2019-12-31 21:45:00+00:00,91668
+volume_assisted,1,inner_model_tuning_validation,2020-01-01 23:15:00+00:00,2020-12-31 21:45:00+00:00,23327
+volume_assisted,1,outer_overlay_validation,2021-01-03 23:15:00+00:00,2021-12-31 21:45:00+00:00,23314
+volume_assisted,1,unseen_test,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+volume_assisted,2,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2020-12-31 21:45:00+00:00,114995
+volume_assisted,2,inner_model_tuning_validation,2021-01-03 23:15:00+00:00,2021-12-31 21:45:00+00:00,23314
+volume_assisted,2,outer_overlay_validation,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+volume_assisted,2,unseen_test,2023-01-02 23:30:00+00:00,2023-12-29 21:30:00+00:00,22985
+volume_assisted,3,inner_model_tuning_train,2016-01-06 03:15:00+00:00,2021-12-31 21:45:00+00:00,138309
+volume_assisted,3,inner_model_tuning_validation,2022-01-02 23:15:00+00:00,2022-12-30 21:30:00+00:00,23290
+volume_assisted,3,outer_overlay_validation,2023-01-02 23:30:00+00:00,2023-12-29 21:30:00+00:00,22985
+volume_assisted,3,unseen_test,2024-01-01 23:15:00+00:00,2024-12-31 21:30:00+00:00,23382

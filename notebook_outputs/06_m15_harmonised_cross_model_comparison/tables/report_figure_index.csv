@@ -1,0 +1,12 @@
+figure_stem,suggested_caption,main_message
+cross_model_all_tracks_net_return_1bps,Mean development net return of all harmonised model tracks at a one-way transaction cost of 1.0 bps.,Shows the economic ranking at the main cost assumption.
+best_active_by_family_cost_curve,"Transaction-cost sensitivity of the best active LightGBM, LSTM and CNN-LSTM tracks.",Shows whether development performance survives realistic friction.
+best_active_by_family_fold_returns_1bps,Annual walk-forward test returns of the best active track from each model family at 1.0 bps.,Shows regime stability and concentration of returns.
+best_active_by_family_development_equity_1bps,Reconstructed walk-forward development equity of the best active family representatives at 1.0 bps.,"Shows the sequence of gains, losses and stay-flat periods."
+cross_model_all_tracks_roc_auc,Mean native ROC-AUC of all harmonised model tracks.,Shows that classification differences are small and do not directly determine trading profitability.
+common_timestamp_roc_auc_by_track,ROC-AUC comparison on timestamps shared by all three model families.,Controls for unequal sequence coverage.
+cross_model_risk_return_scatter_1bps,Mean net return versus absolute mean maximum drawdown at 1.0 bps.,Shows the development risk-return trade-off.
+cross_model_absolute_validation_to_test_decay,Mean absolute return change from overlay validation to unseen test periods.,Shows generalisation stability.
+cross_model_selected_trade_rate,Proportion of development folds in which the validation gate selected active trading.,Distinguishes active evidence from stay-flat protection.
+best_active_by_family_breakeven_cost,Estimated one-way break-even transaction cost of the best active family representatives.,Summarises cost tolerance.
+candidate_eligibility_matrix,Pass/fail matrix for the fixed candidate-selection requirements.,Makes final development selection transparent and reproducible.

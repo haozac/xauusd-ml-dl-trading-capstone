@@ -1,0 +1,10 @@
+{
+  "selected_epoch": 10,
+  "epochs_trained_before_early_stop": 16,
+  "best_inner_validation_auc": 0.528863019579527,
+  "best_inner_validation_brier": 0.24932889577036899,
+  "training_seconds": 118.6357524394989,
+  "inner_train_sequences": 73147,
+  "inner_validation_sequences": 10445,
+  "seed": 42
+}

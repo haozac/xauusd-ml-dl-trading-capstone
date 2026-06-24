@@ -1,0 +1,16 @@
+check,passed
+Notebook 6 selected candidate,True
+Notebook 6 holdout status untouched,True
+Notebook 5 architecture identical across folds,True
+Frozen architecture matches expected,True
+Feature order identical across folds,True
+51 volume-assisted features,True
+Policy parity: vanilla_params,True
+Policy parity: main_selection_cost_bps,True
+Policy parity: cost_grid_bps,True
+Policy parity: threshold_grid,True
+Policy parity: min_hold_grid,True
+Policy parity: max_position_change_grid,True
+Policy parity: daily_loss_stop,True
+Policy parity: total_drawdown_stop,True
+Policy parity: min_validation_trades,True

@@ -1,0 +1,13 @@
+model_family,track,feature_set,mode,fold,selection_cost_bps,selected_action,upper_threshold,lower_threshold,min_hold_bars,max_position_change_events_per_day,validation_selected_net_return,validation_selected_sharpe,validation_selected_max_drawdown,validation_selected_trade_count,validation_selected_active_rate,validation_viable_candidates
+lightgbm,vanilla_price_only,price_only,vanilla,1,1.0,trade,0.52,0.48,3.0,3.0,0.0838855363208126,0.7299420434166752,-0.1008052917221621,589,0.63712790597924,2
+lightgbm,vanilla_price_only,price_only,vanilla,2,1.0,trade,0.51,0.49,1.0,5.0,0.0769323987571639,0.6248498175971909,-0.0976030638882108,1006,0.6594675826534994,1
+lightgbm,vanilla_price_only,price_only,vanilla,3,1.0,trade,0.55,0.45,2.0,5.0,0.1915247593445954,1.827487007087,-0.0748845998811121,767,0.4679138568631716,6
+lightgbm,vanilla_volume_assisted,volume_assisted,vanilla,1,1.0,trade,0.53,0.47,3.0,3.0,0.0645353161787483,0.545598328842974,-0.1029628182099705,546,0.6824225787080724,2
+lightgbm,vanilla_volume_assisted,volume_assisted,vanilla,2,1.0,stay_flat,,,,,0.0,0.0,0.0,0,0.0,0
+lightgbm,vanilla_volume_assisted,volume_assisted,vanilla,3,1.0,trade,0.51,0.49,2.0,3.0,0.1677008610983592,1.4782131887059486,-0.1263598585317188,598,0.7064172286273657,4
+lightgbm,tuned_price_only,price_only,tuned,1,1.0,trade,0.55,0.45,3.0,3.0,0.1327724276834339,1.7068043134397402,-0.0407630012761717,363,0.2519087243716222,11
+lightgbm,tuned_price_only,price_only,tuned,2,1.0,trade,0.51,0.49,1.0,3.0,0.0461950788377774,0.3767919964009183,-0.1081855052121958,655,0.6725203950193216,1
+lightgbm,tuned_price_only,price_only,tuned,3,1.0,trade,0.53,0.47,1.0,3.0,0.0692127854749369,0.6281277182739006,-0.0845453456984083,560,0.6928866652164455,2
+lightgbm,tuned_volume_assisted,volume_assisted,tuned,1,1.0,trade,0.55,0.45,3.0,5.0,0.1223120438496199,1.6425009516523152,-0.0304650082688981,572,0.2196534271253324,7
+lightgbm,tuned_volume_assisted,volume_assisted,tuned,2,1.0,stay_flat,,,,,0.0,0.0,0.0,0,0.0,0
+lightgbm,tuned_volume_assisted,volume_assisted,tuned,3,1.0,trade,0.53,0.47,2.0,5.0,0.12074908385377614,1.1296468927946048,-0.1083416638944632,828,0.6478572982379813,7

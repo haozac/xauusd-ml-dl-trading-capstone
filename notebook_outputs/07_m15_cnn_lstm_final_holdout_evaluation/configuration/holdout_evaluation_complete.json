@@ -1,0 +1,9 @@
+{
+  "status": "COMPLETE_AND_LOCKED",
+  "completed_utc": "2026-06-18 01:10:48.721607+00:00",
+  "config_fingerprint": "55b349c6d957d26e528c0546c78fb7363bf515a93ce705c6a4c0e97862aff326",
+  "holdout_status": "NEGATIVE",
+  "holdout_predictions_sha256": "0a8ac74289ca277137cde00ad22a24abcb9ad1e0d7a7694d9d712aae895ad388",
+  "evaluation_manifest_sha256": "eae830102b0eab4fb51d38dedb1999180178a342864416e7ab18c5ec85b670ba",
+  "instruction": "Do not change the frozen methodology or create a second holdout attempt."
+}

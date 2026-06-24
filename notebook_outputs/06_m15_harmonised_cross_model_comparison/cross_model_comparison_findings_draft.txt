@@ -1,0 +1,33 @@
+Notebook 6 — Harmonised cross-model development comparison
+
+Framework integrity
+- Final harmonised LightGBM, LSTM and CNN-LSTM outputs were loaded successfully.
+- The three model families used identical walk-forward folds, inner model-validation roles, outer overlay-validation roles, transaction-cost assumptions, overlay grids and risk controls.
+- The final 2025-01-01 to 2026-03-31 holdout was not accessed.
+
+Primary development finding
+- The selected candidate is CNN-LSTM vanilla volume assisted.
+- Selection tier: strict.
+- Mean net return: 10.3714% at 0 bps, 6.5665% at 0.5 bps and 2.2578% at 1.0 bps.
+- Mean Sharpe at 1.0 bps: -0.0397.
+- Mean maximum drawdown at 1.0 bps: -9.5158%.
+- Positive development folds at 1.0 bps: 1/3.
+- Active development folds: 2/3.
+- Estimated one-way break-even cost: 1.545 bps.
+
+Interpretation
+- The candidate advances because it is the only strict eligible system under the fixed development-selection policy.
+- It should be treated as a provisional candidate, not as proof of profitability or deployment readiness.
+- The final holdout must be evaluated once with no post-hoc changes.
+
+Caution flags
+- Only one of three development test folds was profitable at 1.0 bps.
+- The worst development fold lost at least 10%.
+- Mean development Sharpe at 1.0 bps was not positive.
+- At least one development fold triggered the total drawdown stop.
+- Estimated one-way break-even cost remained below 2 bps.
+- The validation gate selected stay-flat in at least one development fold.
+
+Next step
+- Freeze the selected model family, feature track, architecture policy, cost assumptions and overlay policy.
+- Proceed to Notebook 7 for one final untouched holdout evaluation.
