@@ -1,0 +1,152 @@
+schema_version: '1.2'
+configuration_id: model_b_v2_post_holdout_long_only_v1_2
+strategy_id: MODEL_B_V2
+strategy_name: Post-Holdout Long-Only Risk-Oriented Overlay
+status: FROZEN_STAGE_0
+prepared_date: '2026-06-29'
+deployment_scope: MT5_DEMO_ONLY
+methodological_classification: POST_HOLDOUT_OVERLAY_REVISION
+historical_replay_label: POST_HOLDOUT_RETROSPECTIVE_DIAGNOSTIC_NOT_UNTOUCHED
+hypothesis: Removing short positions and constraining entries may reduce harmful short exposure, turnover, transaction-cost
+  erosion, active exposure, and drawdown relative to Model A.
+shared_frozen_artifacts:
+  source_configuration: config/model_a_frozen.yaml
+  base_directory: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation
+  model:
+    path: models/cnn_lstm_vanilla_volume_assisted_holdout_evaluation.keras
+    sha256: e837059ff3b18f476dd4b32c7e5c171a5100df8bd18eb95ff1aa8cb3078716d1
+  scaler:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_scaler.pkl
+    sha256: d87a06b16a0267c78b8382dd077a4875a72053b028e8da22136935de0a0fa9de
+  feature_order:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_features.json
+    sha256: ee2c374f275cd6b97cb257ce96775e14ebce777128e2314d9c63b3795daa2a13
+    feature_count: 51
+  model_parameters:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_params.json
+    sha256: 8f9c2a03b728fbd0d1c3e1bfdf5ec813ef58c5173c4452430b0e9910c17d5fb2
+model_contract:
+  identical_to_model_a: true
+  family: CNN-LSTM
+  track: vanilla_volume_assisted
+  timeframe: M15
+  sequence_length: 48
+  feature_count: 51
+  input_shape:
+  - 48
+  - 51
+  input_dtype: float32
+  output: p_up
+overlay:
+  allowed_positions:
+  - 0
+  - 1
+  short_positions_allowed: false
+  entry:
+    from_position: 0
+    to_position: 1
+    condition: p_up >= 0.55
+    threshold: 0.55
+  hold:
+    position: 1
+    condition: p_up >= 0.50
+    threshold: 0.5
+  normal_exit:
+    from_position: 1
+    to_position: 0
+    condition: p_up < 0.50
+    threshold: 0.5
+  minimum_hold_eligible_bars: 0
+  maximum_successful_new_entries_per_utc_day: 1
+  daily_entry_counter_reset_timezone: UTC
+  successful_entry_definition: confirmed fill or virtual fill that establishes long from flat
+  rejected_order_consumes_daily_entry_allowance: false
+  exit_restores_daily_entry_allowance: false
+  same_bar_exit_and_reentry_allowed: false
+  risk_gap_session_and_emergency_exits_override_overlay: true
+risk_governance:
+  daily_loss_stop_simple_return: -0.02
+  daily_boundary_timezone: UTC
+  daily_loss_basis: independent strategy equity relative to UTC start-of-day strategy equity
+  daily_loss_action: request immediate flattening and block new entries until next UTC day
+  total_drawdown_stop: -0.15
+  total_drawdown_basis: independent strategy equity relative to running peak
+  total_drawdown_action: request immediate flattening and permanently block new entries for the run
+  same_position_sizing_rule_as_model_a: true
+  initial_position_size_candidate: minimum broker-valid XAUUSD lot on equal-capital demo accounts
+  if_minimum_lot_exceeds_safety_cap: BLOCK_TRADING
+  emergency_kill_switch_required: true
+  unresolved_position_mismatch_blocks_new_entries: true
+  unreconciled_order_blocks_new_entries: true
+  risk_exit_must_not_be_blocked_by_overlay: true
+rationale_traceability:
+  long_only: Notebook 7 short-held bars had substantial negative gross contribution while long-held bars had positive gross
+    contribution.
+  entry_0_55: Stricter score than Model A and a threshold already present in the predefined Notebook 7 grid; intended to reduce
+    marginal entries.
+  exit_0_50: Conventional directional boundary and hysteresis relative to the entry threshold.
+  one_entry_per_day: Conservative turnover and transaction-cost cap.
+  no_minimum_hold: Reduces the mismatch between next-M15 target and mandatory multi-bar commitment.
+  not_claimed_optimal: true
+  not_claimed_calibrated_probability: true
+diagnostic_invariants:
+  short_position_count_must_equal: 0
+  entry_below_0_55_must_equal: 0
+  normal_long_hold_below_0_50_must_equal: 0
+  successful_entries_per_utc_day_must_not_exceed: 1
+  risk_exits_must_never_be_blocked: true
+  results_must_be_reproducible: true
+  normal_long_hold_invariant_applies_to: intended strategy position; broker fill failures are reconciliation incidents
+diagnostic_outcomes_to_report_not_optimise:
+- gross_return
+- net_return
+- maximum_drawdown
+- worst_daily_loss
+- active_rate
+- successful_entry_count
+- turnover_units
+- transaction_cost_burden
+- total_stop_triggered
+- comparison_with_model_a
+live_execution_safety_layer:
+  must_match_common_safety_layer_used_by_model_a: true
+  broker_values_source: runtime_configuration.future_path
+forward_evaluation:
+  configuration_must_be_frozen_before_start: true
+  same_feed_and_probability_as_model_a: true
+  same_observation_window_as_model_a: true
+  minimum_target_observation_days: 14
+  profitability_guaranteed: false
+  results_classification: PRELIMINARY_PROSPECTIVE_PAPER_TRADING_EVIDENCE
+  same_position_sizing_rule_as_model_a: true
+change_control:
+  model_and_preprocessing_frozen: true
+  probability_and_position_rules_frozen_after_stage_0_approval: true
+  historical_or_short_term_live_profit_may_trigger_threshold_change: false
+  material_change_requires_new_strategy_version_and_new_observation_window: true
+  broker_specific_controls_stored_in_separate_runtime_configuration: true
+  configuration_hash_recorded_externally: true
+  broker_specific_controls_must_be_frozen_in_separate_runtime_configuration_at_stage_2_step_9: true
+stage_gates:
+  stage_1_rule_and_replay_tests_required: true
+  stage_2_shadow_required: true
+  stage_3_demo_orders_initially_enabled: false
+  council_review_required_before_stage_3: true
+runtime_environment_contract:
+  identical_to_model_a: true
+  source_configuration: config/model_a_frozen.yaml
+runtime_configuration:
+  status: PENDING_STAGE_2_BROKER_INSPECTION
+  future_path: config/mt5_runtime_frozen.yaml
+  common_to_model_a_and_model_b: true
+  strategy_yaml_must_not_be_modified_with_broker_values: true
+  hash_recorded_externally: true
+approved_date: '2026-06-29'
+evidence_sources:
+  source_model_a_configuration: config/model_a_frozen.yaml
+  classification_metrics: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_classification_metrics.csv
+  trading_metrics_by_cost: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_trading_metrics_by_cost.csv
+  strategy_bar_log_1bps: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_strategy_bar_log_1bps.csv
+  selected_overlay: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/configuration/selected_overlay.json
+  overlay_validation_grid: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/overlay_validation_grid_at_1bps.csv
+  overlay_validation_predictions: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/overlay_validation_predictions.csv

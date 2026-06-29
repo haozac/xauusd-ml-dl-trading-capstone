@@ -1,0 +1,165 @@
+schema_version: '1.2'
+configuration_id: model_a_notebook7_frozen_v1_2
+strategy_id: MODEL_A
+strategy_name: Frozen Notebook 7 Research Benchmark
+status: FROZEN_STAGE_0
+prepared_date: '2026-06-29'
+deployment_scope: MT5_DEMO_ONLY
+research_source:
+  notebook: 07_m15_cnn_lstm_final_untouched_holdout_evaluation_executed.ipynb
+  notebook_config_version: 07_final_holdout_v1_2026-06-17
+  config_fingerprint: 55b349c6d957d26e528c0546c78fb7363bf515a93ce705c6a4c0e97862aff326
+  completion_status: COMPLETE_AND_LOCKED
+  holdout_status: NEGATIVE
+  instruction: Do not change the frozen methodology or create a second holdout attempt.
+artifact_bundle:
+  base_directory: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation
+  model:
+    path: models/cnn_lstm_vanilla_volume_assisted_holdout_evaluation.keras
+    sha256: e837059ff3b18f476dd4b32c7e5c171a5100df8bd18eb95ff1aa8cb3078716d1
+  scaler:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_scaler.pkl
+    sha256: d87a06b16a0267c78b8382dd077a4875a72053b028e8da22136935de0a0fa9de
+    class: sklearn.preprocessing.StandardScaler
+    fitted_feature_count: 51
+    fitted_rows: 184584
+  feature_order:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_features.json
+    sha256: ee2c374f275cd6b97cb257ce96775e14ebce777128e2314d9c63b3795daa2a13
+    feature_count: 51
+  model_parameters:
+    path: preprocessing/cnn_lstm_vanilla_volume_assisted_holdout_params.json
+    sha256: 8f9c2a03b728fbd0d1c3e1bfdf5ec813ef58c5173c4452430b0e9910c17d5fb2
+  selected_epoch:
+    path: configuration/selected_epoch.json
+    sha256: b89272c458babff730d6c9befea7a9d6e73bbd0199d0c5ee757b979a110ddb0e
+    value: 10
+  selected_overlay:
+    path: configuration/selected_overlay.json
+    sha256: 675ceada5a57e3fc211d7b9fadc19ae00ebe004c9e50f641ec49884bdbbd1d23
+model_contract:
+  family: CNN-LSTM
+  track: vanilla_volume_assisted
+  timeframe: M15
+  sequence_length: 48
+  feature_count: 51
+  input_shape:
+  - 48
+  - 51
+  input_dtype: float32
+  output: p_up
+  output_activation: sigmoid
+  parameter_count: 29825
+  selected_epoch: 10
+  architecture:
+    conv_filters_1: 32
+    conv_filters_2: 0
+    kernel_size: 3
+    pool_size: 2
+    lstm_units: 64
+    external_dropout: 0.2
+    lstm_dropout: 0.0
+    lstm_recurrent_dropout: 0.0
+    l2: 1.0e-05
+preprocessing_contract:
+  historical_dataset: data/capstone_methodology/processed/dukascopy_xauusd_m15_volume_assisted_relative_dataset.parquet
+  historical_bars: data/capstone_methodology/processed/dukascopy_xauusd_m15_bars_with_volume.parquet
+  feature_order_source: artifact_bundle.feature_order.path
+  cast_before_scaling: float32
+  cast_after_scaling: float32
+  expected_bar_delta_minutes: 15
+  sequence_may_cross_gap: false
+  forming_bar_allowed: false
+  canonical_timezone: UTC
+  historical_timestamp_label: M15 interval close
+overlay:
+  allowed_positions:
+  - -1
+  - 0
+  - 1
+  long_when_p_up_gte: 0.53
+  short_when_p_up_lte: 0.47
+  flat_zone:
+    p_up_gt: 0.47
+    p_up_lt: 0.53
+  minimum_hold_eligible_bars: 3
+  maximum_overlay_position_change_events_per_utc_day: 3
+  reversal_policy_event_units: 1
+  reversal_turnover_units: 2
+  safety_exits_count_against_daily_change_cap: false
+  gap_exits_count_against_daily_change_cap: false
+  risk_exits_count_against_daily_change_cap: false
+  daily_counter_reset_timezone: UTC
+historical_risk_semantics:
+  daily_loss_stop_simple_return: -0.02
+  daily_loss_stop_log_threshold: -0.020202707317519466
+  daily_loss_basis: cumulative net log return since UTC day start
+  daily_loss_action: flat from the next eligible decision after trigger until next UTC day
+  total_drawdown_stop: -0.15
+  total_drawdown_basis: net strategy equity relative to running peak
+  total_drawdown_action: flat from the next eligible decision and remain flat
+  risk_exit_overrides_hold_and_change_cap: true
+historical_cost_semantics:
+  main_one_way_cost_bps_per_turnover_unit: 1.0
+  turnover_units: absolute change in position; reversal equals 2
+  gross_log_return: position multiplied by next eligible M15 log return
+  net_log_return: gross log return minus turnover cost
+live_execution_safety_layer:
+  applies_equally_to_model_a_and_model_b: true
+  research_equivalent_virtual_ledger_required: true
+  broker_executed_ledger_required: true
+  emergency_kill_switch_required: true
+  broker_values_source: runtime_configuration.future_path
+change_control:
+  core_model_frozen: true
+  preprocessing_frozen: true
+  overlay_frozen: true
+  historical_risk_semantics_frozen: true
+  short_term_profit_or_loss_may_trigger_parameter_change: false
+  material_change_requires_new_strategy_version: true
+  broker_specific_controls_stored_in_separate_runtime_configuration: true
+  configuration_hash_recorded_externally: true
+  broker_specific_controls_must_be_frozen_in_separate_runtime_configuration_at_stage_2_step_9: true
+stage_gates:
+  stage_1_offline_parity_required: true
+  stage_2_shadow_required: true
+  stage_3_demo_orders_initially_enabled: false
+runtime_environment_contract:
+  python_supported:
+  - '3.11'
+  - '3.12'
+  tensorflow: 2.20.0
+  keras: 3.13.2
+  scikit_learn: 1.6.1
+  parity_reference_device: CPU with deterministic operations enabled
+live_risk_semantics:
+  daily_loss_stop_simple_return: -0.02
+  daily_boundary_timezone: UTC
+  daily_loss_basis: independent strategy equity relative to UTC start-of-day strategy equity
+  daily_loss_action: request immediate flattening and block new entries until next UTC day
+  total_drawdown_stop: -0.15
+  total_drawdown_basis: independent strategy equity relative to running peak
+  total_drawdown_action: request immediate flattening and permanently block new entries for the run
+  risk_exit_must_not_be_blocked_by_overlay: true
+comparison_sizing_governance:
+  same_position_sizing_rule_for_model_a_and_model_b: true
+  default_candidate: minimum broker-valid XAUUSD lot on equal-capital demo accounts
+  maximum_notional_to_equity: PENDING_STAGE_2
+  maximum_margin_use: PENDING_STAGE_2
+  if_minimum_lot_exceeds_safety_cap: BLOCK_TRADING
+  model_b_may_have_lower_realised_exposure_only_due_to_lower_activity: true
+runtime_configuration:
+  status: PENDING_STAGE_2_BROKER_INSPECTION
+  future_path: config/mt5_runtime_frozen.yaml
+  common_to_model_a_and_model_b: true
+  strategy_yaml_must_not_be_modified_with_broker_values: true
+  hash_recorded_externally: true
+approved_date: '2026-06-29'
+evidence_sources:
+  completion_lock: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/configuration/holdout_evaluation_complete.json
+  artefact_manifest: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/configuration/evaluation_artefact_manifest.json
+  classification_metrics: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_classification_metrics.csv
+  trading_metrics_by_cost: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_trading_metrics_by_cost.csv
+  strategy_bar_log_1bps: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_strategy_bar_log_1bps.csv
+  overlay_validation_grid: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/overlay_validation_grid_at_1bps.csv
+  overlay_validation_predictions: notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/overlay_validation_predictions.csv

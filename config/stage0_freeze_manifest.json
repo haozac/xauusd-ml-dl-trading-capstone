@@ -1,0 +1,21 @@
+{
+  "manifest_version": "1.0",
+  "stage0_version": "1.2",
+  "status": "FROZEN_STAGE_0",
+  "approved_date": "2026-06-29",
+  "hash_algorithm": "SHA-256",
+  "files": {
+    "config/model_a_frozen.yaml": {
+      "sha256": "70421c1363749cd730dc5a7b28fb046846c13b443958cf8213670b0486952cd7"
+    },
+    "config/model_b_v2_frozen.yaml": {
+      "sha256": "a6a574a675298907bcccd4626162e9ea048bb077118b3d93c5203aa022f16660"
+    },
+    "docs/deployment/deployment_specification_v1.md": {
+      "sha256": "983144453dd8d512ee009a87f876b6ddfd4b676d04f309cefd6f5b76bb80a0b7"
+    },
+    "docs/deployment/model_b_v2_rationale.md": {
+      "sha256": "31746b798ef08bc70d337d92d32e27d82fee32f7ed814564b281495287a7602d"
+    }
+  }
+}
