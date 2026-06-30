@@ -1,0 +1,80 @@
+{
+  "created_utc": "2026-06-29T14:09:39.582398+00:00",
+  "files": {
+    "docs/deployment/stage1_step1_review.md": {
+      "sha256": "da90c9d4e3927e26b48e7fa676e3962c10adfd1107d931d451b09cc345569e50",
+      "size_bytes": 2995
+    },
+    "docs/deployment/stage1_step1_runbook.md": {
+      "sha256": "533ec6d658408252fdf0e2efce9a931ab877bfe45df6f729cecdb3c57a0a5eea",
+      "size_bytes": 3573
+    },
+    "pyproject.toml": {
+      "sha256": "8faf5512e7c3267218a91055bdf67e8591656f6031170536fbcc5ee569b7e6f0",
+      "size_bytes": 755
+    },
+    "scripts/verify_notebook7_artifacts.py": {
+      "sha256": "2f68e89067fbf9f0ecc94d124777348b572d3cc41aa2cbf0b55434e261265de4",
+      "size_bytes": 8154
+    },
+    "src/capstone_trading/__init__.py": {
+      "sha256": "479b31a6ba1019744e62474bcdd4cf7798079d66005f4d6677cdbc566c8c0275",
+      "size_bytes": 444
+    },
+    "src/capstone_trading/artifacts.py": {
+      "sha256": "c01c280b41c9e4ff02d263737099610089d7904d56f9a0adfe49993e5f519129",
+      "size_bytes": 16066
+    },
+    "src/capstone_trading/config.py": {
+      "sha256": "a86d818640d14fcbb7434582dd9716813ef417422bb7aafa80955a08da4f7017",
+      "size_bytes": 8284
+    },
+    "src/capstone_trading/errors.py": {
+      "sha256": "c42ad767023e3bd7e5691a458474d884a3689086a4dc918186e904e6edb8cba2",
+      "size_bytes": 855
+    },
+    "src/capstone_trading/model_loader.py": {
+      "sha256": "85111690a44ecc15d0d23f779006555f9f4baaa25d208a61353adc9fc49ab08a",
+      "size_bytes": 16308
+    },
+    "tests/fixtures/notebook7_reference_sequence.csv": {
+      "sha256": "96de397f65dd7ab43f7a5f264d5de587a7803f3673f929d650b62e216f1e7b49",
+      "size_bytes": 34232
+    },
+    "tests/fixtures/notebook7_reference_sequence.json": {
+      "sha256": "f4ebf586101276d67b0ad1223b35f4976ae7eb904c01ef245c734717602ecbc6",
+      "size_bytes": 947
+    },
+    "tests/integration/test_real_notebook7_bundle.py": {
+      "sha256": "0b00ca292e8ebfb871ce7f66c5b9977fde954e6ca537cfb5899d61435ff91b8f",
+      "size_bytes": 1379
+    },
+    "tests/integration/test_tensorflow_smoke.py": {
+      "sha256": "ed733d8876476db360cff3ddd4dbce017900d4e27331069bb16179e125c30f3f",
+      "size_bytes": 1357
+    },
+    "tests/unit/test_artifacts.py": {
+      "sha256": "60953ab8863b2f324992d66a7606a2dd40b75d50dddf68444941c1cd0f8e88c8",
+      "size_bytes": 1589
+    },
+    "tests/unit/test_config.py": {
+      "sha256": "51e1d56ef56546512cad9d3bbf846137f3b692af6a303bfd35bdfa0b29c5d03d",
+      "size_bytes": 1307
+    },
+    "tests/unit/test_model_loader.py": {
+      "sha256": "cf75e370d960dbec4803b852c18656b201e9f066d5582c64fc1cc14505eac380",
+      "size_bytes": 3429
+    }
+  },
+  "formal_tensorflow_gate_run_in_review_environment": false,
+  "local_review": {
+    "compileall": "PASS",
+    "metadata_only_real_bundle": "PASS",
+    "pytest_non_tensorflow": "13 passed, 1 deselected",
+    "ruff": "PASS",
+    "supplemental_keras_torch_reference_abs_difference": 2.9802322443206464e-08,
+    "supplemental_threshold_flips": 0
+  },
+  "patch_version": "stage1_step1_v1.0",
+  "scope": "Stage 1 Step 1 environment and frozen artefact verification only"
+}

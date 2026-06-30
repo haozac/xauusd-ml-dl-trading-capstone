@@ -1,0 +1,23 @@
+{
+  "fixture_version": "1.0",
+  "purpose": "Stage 1 Step 1 scaler-plus-model compatibility smoke test",
+  "source_dataset": "data/capstone_methodology/processed/dukascopy_xauusd_m15_volume_assisted_relative_dataset.parquet",
+  "source_prediction": "notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_strategy_bar_log_1bps.csv",
+  "sequence_end_utc": "2025-09-24T20:45:00+00:00",
+  "sequence_start_utc": "2025-09-24T09:00:00+00:00",
+  "shape": [
+    48,
+    51
+  ],
+  "dtype": "float32",
+  "expected_probability": 0.3610754013061523,
+  "selection_reason": "A valid holdout sequence far from all frozen decision thresholds, selected only for compatibility testing.",
+  "decision_thresholds": [
+    0.47,
+    0.5,
+    0.53,
+    0.55
+  ],
+  "raw_array_sha256": "4bfad32867ef6d0a68f8bc72fd2c1da8495c36d9d8d1f61c05d87d23c2cbe756",
+  "feature_order_sha256": "f765fc4746d929d4bc61b1b0c58bf28090976af5617465be590840ca95f9b82e"
+}
