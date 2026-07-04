@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "patch_id": "stage1_step5_patch_v1_0",
+  "purpose": "Stage 1 Step 4 diagnostic alias cleanup plus Stage 1 Step 5 Model B diagnostic replay.",
+  "files": [
+    {
+      "path": "docs/deployment/stage1_step5_review.md",
+      "sha256": "970d0dcdfff5faa39149be1e55bd494a019cc56c6f85985cbec86816c1ed1000",
+      "size_bytes": 1529
+    },
+    {
+      "path": "docs/deployment/stage1_step5_runbook.md",
+      "sha256": "df5d8f085dec82d6137f46f9a07940f87866434ecb42fa8769bf9486b1852f88",
+      "size_bytes": 2229
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "33751a2eaa8f8707737f0aa7e4a7d1063f3320ceae65e31fe1814c674488031b",
+      "size_bytes": 1014
+    },
+    {
+      "path": "scripts/deployment/run_model_b_diagnostic_replay.py",
+      "sha256": "1d953baf8e9c5c280c1837989aed5bad02e9440d49e80e54b74d610be2edc413",
+      "size_bytes": 18849
+    },
+    {
+      "path": "src/capstone_trading/evaluation/model_b_replay.py",
+      "sha256": "117d5bb9df8e286de676359f2bfd9914579a8c57881124e26c6f1acfda298cf1",
+      "size_bytes": 19125
+    },
+    {
+      "path": "src/capstone_trading/evaluation/trading_replay.py",
+      "sha256": "3547cd637355cc9fece6ce7024182eec93c99527ded205f76070bcd16dcae4be",
+      "size_bytes": 32214
+    },
+    {
+      "path": "tests/integration/test_stage1_step5_model_b_replay.py",
+      "sha256": "cc4914a297351b1c71563d152fe7cbb75ff8347d6364dd062cfe2eaa9f2cd439",
+      "size_bytes": 1748
+    },
+    {
+      "path": "tests/unit/test_model_b_replay.py",
+      "sha256": "cb2ce25ab0919dc4e9bd0ec7fa73b0cdb6953d5ddd0debf788b4e27ef0cadfdd",
+      "size_bytes": 4917
+    },
+    {
+      "path": "tests/unit/test_trading_replay.py",
+      "sha256": "9ff72c9beb94e7aaa306cbf697196bc8b6a62657214a4253d0b440dfe0aa7a08",
+      "size_bytes": 7036
+    }
+  ]
+}

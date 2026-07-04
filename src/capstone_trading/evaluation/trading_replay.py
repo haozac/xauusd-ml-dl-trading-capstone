@@ -695,21 +695,36 @@ def compare_overlay_selection_metrics(
 
     aliases = {
         "net_total_return": (
+            "validation_selected_net_return",
             "validation_net_return",
             "validation_net_total_return",
             "net_return",
             "net_total_return",
         ),
         "max_drawdown": (
+            "validation_selected_max_drawdown",
             "validation_max_drawdown",
             "max_drawdown",
             "validation_net_max_drawdown",
         ),
-        "turnover_units": ("validation_turnover", "turnover", "turnover_units"),
+        "turnover_units": (
+            "validation_selected_turnover_units",
+            "validation_turnover",
+            "turnover",
+            "turnover_units",
+        ),
         "round_turn_equivalent_trades": (
+            "validation_selected_trade_count",
             "validation_round_turn_trades",
             "round_turn_equivalent_trades",
+            "trade_count",
             "trades",
+        ),
+        "active_bar_rate": (
+            "validation_selected_active_rate",
+            "validation_active_rate",
+            "active_bar_rate",
+            "active_rate",
         ),
     }
     metric_dict = asdict(validation_metrics)

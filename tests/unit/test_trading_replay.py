@@ -146,3 +146,45 @@ def test_overlay_rules_from_config_accepts_frozen_daily_loss_key() -> None:
     parsed = overlay_rules_from_config(config)
 
     assert parsed.daily_loss_log_threshold == pytest.approx(math.log(0.98))
+
+
+def test_compare_overlay_selection_metrics_accepts_selected_overlay_keys() -> None:
+    from capstone_trading.evaluation.trading_replay import (
+        ReplayMetrics,
+        compare_overlay_selection_metrics,
+    )
+
+    metric = ReplayMetrics(
+        cost_bps=1.0,
+        row_count=10,
+        active_bar_count=5,
+        active_bar_rate=0.5,
+        turnover_units=8.0,
+        round_turn_equivalent_trades=4.0,
+        policy_change_events=4,
+        gap_exit_events=0,
+        daily_stop_exit_events=0,
+        daily_stop_trigger_count=0,
+        total_stop_exit_events=0,
+        total_stop_triggered=False,
+        first_total_stop_trigger_utc=None,
+        final_gross_equity=1.2,
+        final_net_equity=1.1,
+        gross_total_return=0.2,
+        net_total_return=0.1,
+        max_drawdown=-0.05,
+        gross_log_return_sum=0.18,
+        net_log_return_sum=0.095,
+        daily_stop_dates=(),
+    )
+    selected = {
+        "validation_selected_net_return": 0.1,
+        "validation_selected_max_drawdown": -0.05,
+        "validation_selected_trade_count": 4.0,
+        "validation_selected_active_rate": 0.5,
+    }
+
+    comparisons = compare_overlay_selection_metrics(metric, selected, tolerance=1e-12)
+
+    assert len(comparisons) == 4
+    assert all(item.passed for item in comparisons)
