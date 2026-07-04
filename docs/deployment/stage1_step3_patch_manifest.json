@@ -1,0 +1,54 @@
+{
+  "description": "Full frozen CNN-LSTM probability inference parity across Notebook 7 overlay-validation and final-holdout sequences.",
+  "files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "bdccedc5074a1847f004f8f733b1406ad66ca0ec094c8c10ae90738895933a63",
+      "size_bytes": 897
+    },
+    {
+      "path": "scripts/deployment/verify_notebook7_artifacts.py",
+      "sha256": "92cdbf3546cc47bddb3540de84852bfc524214502316d1ef5db29d76647bf1a3",
+      "size_bytes": 8954
+    },
+    {
+      "path": "scripts/deployment/run_inference_parity.py",
+      "sha256": "977bccb49ef32819fe92f12cae6a21522fd9f52e8ad8aa3a08080977d0c5916c",
+      "size_bytes": 19842
+    },
+    {
+      "path": "src/capstone_trading/errors.py",
+      "sha256": "1bf06b1ff0930b56d87748242ebe07d1a479aed85433bfba7452be12c0cdba8e",
+      "size_bytes": 1603
+    },
+    {
+      "path": "src/capstone_trading/evaluation/inference_parity.py",
+      "sha256": "302ec853ae79b6722f4f3cce0c22d76cdf4558b8a863fb464e1223f60133ed1e",
+      "size_bytes": 12416
+    },
+    {
+      "path": "tests/unit/test_inference_parity.py",
+      "sha256": "e378850f6e85662f51b3e4a3cd6b27d801f4fc155ef13c3e3b78db27a6840139",
+      "size_bytes": 3288
+    },
+    {
+      "path": "tests/integration/test_stage1_step3_real_inference.py",
+      "sha256": "aa3b6e11fd148251c34eeff8304ce35827919d373cdb1817f01ae4a4e0f525f9",
+      "size_bytes": 1510
+    },
+    {
+      "path": "docs/deployment/stage1_step3_runbook.md",
+      "sha256": "37fd25305200a933388373195931f206234a7e60da6c5760134e9684cd3be34e",
+      "size_bytes": 3361
+    },
+    {
+      "path": "docs/deployment/stage1_step3_review.md",
+      "sha256": "1f52c743b14f238433e3904363e59f26bc692d872e71ce6fe1e93fd0e5be4e92",
+      "size_bytes": 2836
+    }
+  ],
+  "patch_id": "stage1_step3_patch_v1_0",
+  "stage": 1,
+  "status": "APPROVED_FOR_LOCAL_EXECUTION",
+  "step": 3
+}

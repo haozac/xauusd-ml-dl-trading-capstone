@@ -62,6 +62,14 @@ def parse_args() -> argparse.Namespace:
         help="Report version mismatches instead of failing. Not valid for the formal Step 1 gate.",
     )
     parser.add_argument("--inference-tolerance", type=float, default=1e-5)
+    parser.add_argument(
+        "--allow-non-formal-exit-zero",
+        action="store_true",
+        help=(
+            "Allow metadata-only or non-strict diagnostic runs to return exit code 0. "
+            "Do not use this for formal gates or CI."
+        ),
+    )
     parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
@@ -187,7 +195,20 @@ def main() -> int:
         write_report(report_path, report)
         LOGGER.info("Stage 1 Step 1 status: %s", report["status"])
         LOGGER.info("Report: %s", report_path)
-        return 0
+        if report["status"] == "PASS" and report.get("formal_gate") is True:
+            return 0
+        if args.allow_non_formal_exit_zero:
+            LOGGER.warning(
+                "Non-formal Step 1 result returned exit code 0 only because "
+                "--allow-non-formal-exit-zero was supplied"
+            )
+            return 0
+        LOGGER.error(
+            "Non-formal Step 1 result is not a formal pass: status=%s, formal_gate=%s",
+            report["status"],
+            report.get("formal_gate"),
+        )
+        return 4
 
     except Step1VerificationError as exc:
         report["status"] = "FAIL"

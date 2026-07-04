@@ -39,3 +39,11 @@ class FeatureParityError(Step2ParityError):
 
 class SequenceParityError(Step2ParityError):
     """Raised when sequence continuity or alignment differs from Notebook 7."""
+
+
+class Step3InferenceError(RuntimeError):
+    """Base class for an expected Stage 1 Step 3 inference-parity failure."""
+
+
+class InferenceParityError(Step3InferenceError):
+    """Raised when generated model probabilities differ from Notebook 7 predictions."""

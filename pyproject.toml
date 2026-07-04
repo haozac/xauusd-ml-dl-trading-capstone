@@ -30,4 +30,5 @@ markers = [
   "integration: requires local frozen Notebook 7 artefacts",
   "tensorflow: requires the pinned TensorFlow/Keras environment",
   "step2: exercises the audited historical Step 2 parity data",
+  "step3: exercises full frozen model inference parity",
 ]
