@@ -1,0 +1,61 @@
+{
+  "patch_id": "stage1_step6_patch_v1_1",
+  "description": "Stage 1 Step 6 offline runtime simulation with streaming event-materialisation verification.",
+  "files": [
+    {
+      "path": "docs/deployment/stage1_step6_review.md",
+      "sha256": "2a0d1c142c03832a6de741ce3a9c82f039aee2f001ef1461f4832df319772911",
+      "bytes": 1435
+    },
+    {
+      "path": "docs/deployment/stage1_step6_runbook.md",
+      "sha256": "b566bbc4842a5e23e895c736944ad4bd2a96c5df71e3a9568062bd82c7bda442",
+      "bytes": 2292
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "1b387705e77d339f424d5ba4529885cc26aebe5ebc7d5adea27d2d0da578c74f",
+      "bytes": 1075
+    },
+    {
+      "path": "scripts/deployment/__pycache__/run_offline_runtime_simulation.cpython-313.pyc",
+      "sha256": "97df2d47f1ca537a8ed362fdd473bbb9dba7ccf234887f320153106c52782e4f",
+      "bytes": 31067
+    },
+    {
+      "path": "scripts/deployment/run_offline_runtime_simulation.py",
+      "sha256": "d517666a0dcb4b048a393ee828f626432af5f1dd7107b0f412cdd07ce698aad2",
+      "bytes": 29255
+    },
+    {
+      "path": "src/capstone_trading/runtime/__init__.py",
+      "sha256": "4d1389f0f017eab37c6cf6c6482859686178b60ff76c05ead86dcf1a98fffeba",
+      "bytes": 77
+    },
+    {
+      "path": "src/capstone_trading/runtime/__pycache__/offline_simulation.cpython-313.pyc",
+      "sha256": "ba05f329d2c2b3d149ccc63ed36584e7d9b3e38b5788fc8eb0c48b7ffd2542d8",
+      "bytes": 53780
+    },
+    {
+      "path": "src/capstone_trading/runtime/offline_simulation.py",
+      "sha256": "fb657cebe9e15f161c061981c6fe0d257ec88e158b3071000ede9aac48a1d998",
+      "bytes": 47409
+    },
+    {
+      "path": "tests/integration/test_stage1_step6_offline_runtime.py",
+      "sha256": "31858dfa9d2cc77c97ea68f3b88fd2a767d8a5195ddfbfb9bf4aeb85ab8bf5cd",
+      "bytes": 1807
+    },
+    {
+      "path": "tests/unit/__pycache__/test_offline_runtime.cpython-313.pyc",
+      "sha256": "dc23274702323c2c5a408d403828b52154b74dddc24309603bb8c5e1432443a3",
+      "bytes": 8702
+    },
+    {
+      "path": "tests/unit/test_offline_runtime.py",
+      "sha256": "62cc845b9bdf29aa6a48979c927660da8e48622ad5aa4c912f96ee6bfe18c252",
+      "bytes": 7027
+    }
+  ]
+}

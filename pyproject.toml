@@ -33,4 +33,5 @@ markers = [
   "step3: exercises full frozen model inference parity",
   "step4: exercises frozen Model A historical replay parity",
   "step5: exercises frozen Model B diagnostic replay",
+  "step6: exercises offline dual-system runtime simulation",
 ]
