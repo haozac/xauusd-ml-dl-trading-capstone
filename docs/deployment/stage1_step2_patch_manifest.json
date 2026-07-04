@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "patch_id": "stage1_step2_patch_v1_0",
+  "stage": 1,
+  "step": 2,
+  "status": "COUNCIL_REVIEWED_FOR_USER_EXECUTION",
+  "hash_algorithm": "SHA-256",
+  "files": {
+    "config/stage1_step2_reference_manifest.json": {
+      "sha256": "b42d0600ad05e827531465ddee3637e54d4fd10b04960951db095fb894382e6e",
+      "size_bytes": 3840
+    },
+    "docs/deployment/stage1_step1_runbook.md": {
+      "sha256": "38a92b94268a05e36434159b95cc2c926270080be239ecde8fb999a6cbf511cd",
+      "size_bytes": 3595
+    },
+    "docs/deployment/stage1_step2_review.md": {
+      "sha256": "6ee96be3e0af51bae27b1b180d1074e8f36838ae47cb36370ec539bf2e66b879",
+      "size_bytes": 3868
+    },
+    "docs/deployment/stage1_step2_runbook.md": {
+      "sha256": "2ca7cea56b52197aabfb884a58e0f607638e01af36ec3107f1fb7daa67e759f7",
+      "size_bytes": 3885
+    },
+    "pyproject.toml": {
+      "sha256": "203c7c2693b7abf9b18feba88b2d4fb03abd6f2ddda123147be388cf08da3af4",
+      "size_bytes": 840
+    },
+    "scripts/deployment/run_feature_parity.py": {
+      "sha256": "8add6f2eaf6c02a1514471f8b98e1084183d23e42fe445f7894af1eba1a47c0a",
+      "size_bytes": 15465
+    },
+    "src/capstone_trading/data/__init__.py": {
+      "sha256": "832765516b1dbd06651e20d2f586b419be91164d492392a8dee77184629f6521",
+      "size_bytes": 64
+    },
+    "src/capstone_trading/data/canonical_bars.py": {
+      "sha256": "aef8397e42c7af0090edbd5cab9d7d5d56654955862226ed426420913f71c6b3",
+      "size_bytes": 5121
+    },
+    "src/capstone_trading/data/features_m15.py": {
+      "sha256": "41e6625e292b67e5634cd299fea7580a0e77c25f21732c71c13c5b5a74eccb25",
+      "size_bytes": 8663
+    },
+    "src/capstone_trading/data/historical_adapter.py": {
+      "sha256": "457f481625a0320a3f6af71be0cb0d48a59bda1332a9cfcbbcf74260a67a8d01",
+      "size_bytes": 6584
+    },
+    "src/capstone_trading/data/sequences.py": {
+      "sha256": "009c74c1b305cdd43fb1fd107605ed5fa5a6318ad6d0f855bfe8c221b10610e2",
+      "size_bytes": 7284
+    },
+    "src/capstone_trading/errors.py": {
+      "sha256": "09103caf9be30f965adbdffbb63efc0dde51c3744b48b93f9421589a941a8561",
+      "size_bytes": 1343
+    },
+    "src/capstone_trading/evaluation/__init__.py": {
+      "sha256": "e30deef9ffe830052ee0a168f88dbe04b7da96cb6c9e4a6613b41247528da499",
+      "size_bytes": 59
+    },
+    "src/capstone_trading/evaluation/feature_parity.py": {
+      "sha256": "7d8bfae2a964f297e33bffa5de1b448b5d0d7194cde022e430aadecdc8547821",
+      "size_bytes": 5940
+    },
+    "src/capstone_trading/model_loader.py": {
+      "sha256": "b08c134b59f1cff0b7fe770682b55df2929685ea50d83b070b36551f6dd0bc5e",
+      "size_bytes": 17148
+    },
+    "tests/integration/test_stage1_step2_real_data.py": {
+      "sha256": "f49631f8364c2ea83433cd5b26ad7298159dff0e13dc7566e0409303cdab0836",
+      "size_bytes": 1626
+    },
+    "tests/unit/test_canonical_bars.py": {
+      "sha256": "3cd7c4542bfcefdde00337373e38104f883f684c6c8275249ba63a337b70133d",
+      "size_bytes": 1795
+    },
+    "tests/unit/test_feature_parity.py": {
+      "sha256": "545fc548a41c65f9aa08b7f8cc68ba1c3d39249a68581ed0f9f7fd561edf97bd",
+      "size_bytes": 1294
+    },
+    "tests/unit/test_features_m15.py": {
+      "sha256": "9bc1ded505d78fe1089ef1f753a39f49c898d2c70e9887a7b111bdf8ab0b4969",
+      "size_bytes": 1881
+    },
+    "tests/unit/test_historical_adapter.py": {
+      "sha256": "b04a6bbb545aae29cd788610db794d429223cdbbb9e0e609068c13c4210b6fcd",
+      "size_bytes": 1983
+    },
+    "tests/unit/test_sequences.py": {
+      "sha256": "2fd0d025f9c206c07324d396bef2f8610b1a4ab99c39592ee365daaaab5583c6",
+      "size_bytes": 1561
+    }
+  }
+}

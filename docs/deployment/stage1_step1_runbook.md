@@ -55,7 +55,7 @@ python -m pytest -m "not tensorflow"
 ## Run the formal Step 1 verification
 
 ```powershell
-python scripts\verify_notebook7_artifacts.py --repo-root .
+python scripts\deployment\verify_notebook7_artifacts.py --repo-root .
 ```
 
 Expected terminal result:
@@ -75,7 +75,7 @@ runtime/reports/stage1_step1_verification.json
 This command verifies immutable files and JSON/YAML contracts without loading the pickle or Keras model:
 
 ```powershell
-python scripts\verify_notebook7_artifacts.py --repo-root . --metadata-only --non-strict-environment
+python scripts\deployment\verify_notebook7_artifacts.py --repo-root . --metadata-only --non-strict-environment
 ```
 
 A metadata-only result is not sufficient to pass the formal Step 1 gate.

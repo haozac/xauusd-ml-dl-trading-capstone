@@ -81,8 +81,12 @@ def _same_version(actual: str | None, expected: str) -> bool:
     return actual == expected
 
 
-def check_runtime_environment(config: ModelAConfig, *, strict: bool = True) -> EnvironmentReport:
-    python_actual = f"{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}"
+def check_runtime_environment(
+    config: ModelAConfig, *, strict: bool = True
+) -> EnvironmentReport:
+    python_actual = (
+        f"{platform.python_version_tuple()[0]}.{platform.python_version_tuple()[1]}"
+    )
     package_expectations = (
         ("tensorflow", config.environment.tensorflow),
         ("keras", config.environment.keras),
@@ -115,7 +119,9 @@ def check_runtime_environment(config: ModelAConfig, *, strict: bool = True) -> E
                 ],
             ]
         )
-        raise EnvironmentCompatibilityError(f"Pinned runtime environment check failed: {detail}")
+        raise EnvironmentCompatibilityError(
+            f"Pinned runtime environment check failed: {detail}"
+        )
     return report
 
 
@@ -136,7 +142,9 @@ def load_and_validate_scaler(
     try:
         scaler = joblib.load(path)
     except Exception as exc:  # joblib can raise several pickle/version exceptions
-        raise ArtifactValidationError(f"Unable to load frozen scaler {path}: {exc}") from exc
+        raise ArtifactValidationError(
+            f"Unable to load frozen scaler {path}: {exc}"
+        ) from exc
 
     class_name = f"{type(scaler).__module__}.{type(scaler).__name__}"
     if type(scaler).__name__ != "StandardScaler":
@@ -159,9 +167,13 @@ def load_and_validate_scaler(
     has_feature_names = feature_names is not None
     feature_names_match = True
     if has_feature_names:
-        feature_names_match = tuple(str(item) for item in feature_names) == feature_order
+        feature_names_match = (
+            tuple(str(item) for item in feature_names) == feature_order
+        )
         if not feature_names_match:
-            raise ArtifactValidationError("Scaler feature_names_in_ differs from frozen feature order")
+            raise ArtifactValidationError(
+                "Scaler feature_names_in_ differs from frozen feature order"
+            )
 
     for attribute in ("mean_", "var_", "scale_"):
         values = np.asarray(getattr(scaler, attribute, None))
@@ -182,7 +194,9 @@ def load_and_validate_scaler(
 def _normalise_single_shape(shape: Any, *, label: str) -> tuple[int | None, ...]:
     if isinstance(shape, list):
         if len(shape) != 1:
-            raise ModelLoadError(f"Frozen model must have one {label}, found {len(shape)}")
+            raise ModelLoadError(
+                f"Frozen model must have one {label}, found {len(shape)}"
+            )
         shape = shape[0]
     try:
         return tuple(None if value is None else int(value) for value in shape)
@@ -195,20 +209,32 @@ def _layer_class_names(model: Any) -> tuple[str, ...]:
 
 
 def _find_single_layer(model: Any, class_name: str) -> Any:
-    matches = [layer for layer in getattr(model, "layers", ()) if type(layer).__name__ == class_name]
+    matches = [
+        layer
+        for layer in getattr(model, "layers", ())
+        if type(layer).__name__ == class_name
+    ]
     if len(matches) != 1:
         raise ModelLoadError(f"Expected one {class_name} layer, found {len(matches)}")
     return matches[0]
 
 
 def validate_model_contract(model: Any, config: ModelAConfig) -> ModelReport:
-    input_shape = _normalise_single_shape(getattr(model, "input_shape", None), label="input")
-    output_shape = _normalise_single_shape(getattr(model, "output_shape", None), label="output")
+    input_shape = _normalise_single_shape(
+        getattr(model, "input_shape", None), label="input"
+    )
+    output_shape = _normalise_single_shape(
+        getattr(model, "output_shape", None), label="output"
+    )
     expected_input = (None, config.sequence_length, config.feature_count)
     if input_shape != expected_input:
-        raise ModelLoadError(f"Model input shape mismatch: expected {expected_input}, found {input_shape}")
+        raise ModelLoadError(
+            f"Model input shape mismatch: expected {expected_input}, found {input_shape}"
+        )
     if output_shape != (None, 1):
-        raise ModelLoadError(f"Model output shape mismatch: expected (None, 1), found {output_shape}")
+        raise ModelLoadError(
+            f"Model output shape mismatch: expected (None, 1), found {output_shape}"
+        )
 
     try:
         parameter_count = int(model.count_params())
@@ -229,9 +255,17 @@ def validate_model_contract(model: Any, config: ModelAConfig) -> ModelReport:
 
     checks = (
         (int(conv.filters), int(architecture["conv_filters_1"]), "Conv1D filters"),
-        (tuple(int(v) for v in conv.kernel_size), (int(architecture["kernel_size"]),), "Conv1D kernel"),
+        (
+            tuple(int(v) for v in conv.kernel_size),
+            (int(architecture["kernel_size"]),),
+            "Conv1D kernel",
+        ),
         (str(conv.padding), "causal", "Conv1D padding"),
-        (tuple(int(v) for v in pool.pool_size), (int(architecture["pool_size"]),), "pool size"),
+        (
+            tuple(int(v) for v in pool.pool_size),
+            (int(architecture["pool_size"]),),
+            "pool size",
+        ),
         (int(lstm.units), int(architecture["lstm_units"]), "LSTM units"),
         (float(lstm.dropout), float(architecture["lstm_dropout"]), "LSTM dropout"),
         (
@@ -239,13 +273,23 @@ def validate_model_contract(model: Any, config: ModelAConfig) -> ModelReport:
             float(architecture["lstm_recurrent_dropout"]),
             "LSTM recurrent dropout",
         ),
-        (float(spatial_dropout.rate), float(architecture["external_dropout"]), "spatial dropout"),
-        (float(dropout.rate), float(architecture["external_dropout"]), "external dropout"),
+        (
+            float(spatial_dropout.rate),
+            float(architecture["external_dropout"]),
+            "spatial dropout",
+        ),
+        (
+            float(dropout.rate),
+            float(architecture["external_dropout"]),
+            "external dropout",
+        ),
         (int(dense.units), 1, "Dense units"),
     )
     for actual, expected, label in checks:
         if actual != expected:
-            raise ModelLoadError(f"{label} mismatch: expected {expected}, found {actual}")
+            raise ModelLoadError(
+                f"{label} mismatch: expected {expected}, found {actual}"
+            )
     if getattr(conv.activation, "__name__", "") != "relu":
         raise ModelLoadError("Conv1D activation must be relu")
     if getattr(dense.activation, "__name__", "") != "sigmoid":
@@ -269,7 +313,9 @@ def validate_model_contract(model: Any, config: ModelAConfig) -> ModelReport:
     )
 
 
-def load_and_validate_model(path: Path, config: ModelAConfig) -> tuple[Any, ModelReport]:
+def load_and_validate_model(
+    path: Path, config: ModelAConfig
+) -> tuple[Any, ModelReport]:
     configure_deterministic_cpu()
     try:
         import tensorflow as tf
@@ -282,7 +328,9 @@ def load_and_validate_model(path: Path, config: ModelAConfig) -> tuple[Any, Mode
     try:
         tf.config.experimental.enable_op_determinism()
     except Exception as exc:
-        raise EnvironmentCompatibilityError(f"Unable to enable TensorFlow determinism: {exc}") from exc
+        raise EnvironmentCompatibilityError(
+            f"Unable to enable TensorFlow determinism: {exc}"
+        ) from exc
 
     for setter in (
         tf.config.threading.set_inter_op_parallelism_threads,
@@ -297,7 +345,9 @@ def load_and_validate_model(path: Path, config: ModelAConfig) -> tuple[Any, Mode
     try:
         model = keras.models.load_model(path, compile=False)
     except Exception as exc:
-        raise ModelLoadError(f"Unable to load frozen Keras model {path}: {exc}") from exc
+        raise ModelLoadError(
+            f"Unable to load frozen Keras model {path}: {exc}"
+        ) from exc
     return model, validate_model_contract(model, config)
 
 
@@ -313,13 +363,19 @@ def load_reference_fixture(
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise ArtifactValidationError(f"Unable to read reference fixture metadata: {exc}") from exc
+        raise ArtifactValidationError(
+            f"Unable to read reference fixture metadata: {exc}"
+        ) from exc
     if not isinstance(metadata, Mapping):
-        raise ArtifactValidationError("Reference fixture metadata root must be an object")
+        raise ArtifactValidationError(
+            "Reference fixture metadata root must be an object"
+        )
     try:
         frame = pd.read_csv(csv_path)
     except Exception as exc:
-        raise ArtifactValidationError(f"Unable to read reference fixture CSV: {exc}") from exc
+        raise ArtifactValidationError(
+            f"Unable to read reference fixture CSV: {exc}"
+        ) from exc
     if tuple(frame.columns) != feature_order:
         raise ArtifactValidationError(
             "Reference fixture columns do not match the frozen feature order"
@@ -331,7 +387,9 @@ def load_reference_fixture(
             f"Reference fixture shape mismatch: metadata={expected_shape}, array={raw.shape}"
         )
     if not np.isfinite(raw).all():
-        raise ArtifactValidationError("Reference fixture must contain only finite values")
+        raise ArtifactValidationError(
+            "Reference fixture must contain only finite values"
+        )
 
     expected_raw_hash = metadata.get("raw_array_sha256")
     actual_raw_hash = hashlib.sha256(raw.tobytes(order="C")).hexdigest()
@@ -379,17 +437,22 @@ def run_reference_inference(
     batch = transformed[np.newaxis, ...]
     try:
         output = model(batch, training=False)
+        # PyTorch tensors require detach/cpu; TensorFlow tensors convert directly
+        # through .numpy(). Checking detach first avoids TensorFlow's deprecated
+        # compatibility .cpu() method.
         if hasattr(output, "detach"):
             output = output.detach()
-        if hasattr(output, "cpu"):
-            output = output.cpu()
+            if hasattr(output, "cpu"):
+                output = output.cpu()
         if hasattr(output, "numpy"):
             output = output.numpy()
         actual_probability = float(np.asarray(output).reshape(-1)[0])
     except Exception as exc:
         raise ModelLoadError(f"Frozen model inference failed: {exc}") from exc
     if not np.isfinite(actual_probability) or not 0.0 <= actual_probability <= 1.0:
-        raise ModelLoadError(f"Model produced invalid probability: {actual_probability}")
+        raise ModelLoadError(
+            f"Model produced invalid probability: {actual_probability}"
+        )
     difference = abs(actual_probability - expected_probability)
     threshold_flip_count = sum(
         (actual_probability >= threshold) != (expected_probability >= threshold)

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "status": "AUDITED_REFERENCE",
+  "purpose": "Stage 1 Step 2 historical M15 feature and contiguous-sequence parity reference.",
+  "bar_minutes": 15,
+  "sequence_length": 48,
+  "feature_tolerance": 1e-12,
+  "files": {
+    "m15_bars": {
+      "path": "data/capstone_methodology/processed/dukascopy_xauusd_m15_bars_with_volume.parquet",
+      "sha256": "b8991cb934824d6549fea50db5809701bf6352307d3a57e27f9c47c1f3f92505",
+      "size_bytes": 8907868,
+      "row_count": 240636,
+      "column_count": 6,
+      "first_timestamp_utc": "2016-01-03T23:15:00+00:00",
+      "last_timestamp_utc": "2026-04-01T00:00:00+00:00"
+    },
+    "model_ready_dataset": {
+      "path": "data/capstone_methodology/processed/dukascopy_xauusd_m15_volume_assisted_relative_dataset.parquet",
+      "sha256": "1453e457ad988a584fe9225d7cf4b90decda282aac5f99b2e1fbcf0b3ed6a400",
+      "size_bytes": 96812467,
+      "row_count": 237001,
+      "column_count": 54,
+      "first_timestamp_utc": "2016-01-06T03:15:00+00:00",
+      "last_timestamp_utc": "2026-03-31T23:45:00+00:00"
+    }
+  },
+  "partitions": {
+    "inner_train": {
+      "start_inclusive_utc": null,
+      "end_exclusive_utc": "2023-01-01",
+      "row_count": 161599,
+      "sequence_count": 73147,
+      "first_row_utc": "2016-01-06T03:15:00+00:00",
+      "last_row_utc": "2022-12-30T21:30:00+00:00",
+      "first_sequence_end_utc": "2016-01-06T15:00:00+00:00",
+      "last_sequence_end_utc": "2022-12-30T21:30:00+00:00"
+    },
+    "inner_validation": {
+      "start_inclusive_utc": "2023-01-01",
+      "end_exclusive_utc": "2024-01-01",
+      "row_count": 22985,
+      "sequence_count": 10445,
+      "first_row_utc": "2023-01-02T23:30:00+00:00",
+      "last_row_utc": "2023-12-29T21:30:00+00:00",
+      "first_sequence_end_utc": "2023-01-03T11:15:00+00:00",
+      "last_sequence_end_utc": "2023-12-29T21:30:00+00:00"
+    },
+    "final_train": {
+      "start_inclusive_utc": null,
+      "end_exclusive_utc": "2024-01-01",
+      "row_count": 184584,
+      "sequence_count": 83592,
+      "first_row_utc": "2016-01-06T03:15:00+00:00",
+      "last_row_utc": "2023-12-29T21:30:00+00:00",
+      "first_sequence_end_utc": "2016-01-06T15:00:00+00:00",
+      "last_sequence_end_utc": "2023-12-29T21:30:00+00:00"
+    },
+    "overlay_validation": {
+      "start_inclusive_utc": "2024-01-01",
+      "end_exclusive_utc": "2025-01-01",
+      "row_count": 23382,
+      "sequence_count": 11005,
+      "first_row_utc": "2024-01-01T23:15:00+00:00",
+      "last_row_utc": "2024-12-31T21:30:00+00:00",
+      "first_sequence_end_utc": "2024-01-02T11:00:00+00:00",
+      "last_sequence_end_utc": "2024-12-31T21:30:00+00:00"
+    },
+    "final_holdout": {
+      "start_inclusive_utc": "2025-01-01",
+      "end_exclusive_utc": "2026-04-01",
+      "row_count": 29035,
+      "sequence_count": 13794,
+      "first_row_utc": "2025-01-01T23:15:00+00:00",
+      "last_row_utc": "2026-03-31T23:45:00+00:00",
+      "first_sequence_end_utc": "2025-01-02T11:00:00+00:00",
+      "last_sequence_end_utc": "2026-03-31T20:45:00+00:00"
+    }
+  },
+  "prediction_references": {
+    "overlay_validation": {
+      "path": "notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/overlay_validation_predictions.csv",
+      "sha256": "b513b4f1223f2d104ce4d443818b762465f5fa56d71fd9fe52c30a0d5b1122b4",
+      "row_count": 11005,
+      "first_timestamp_utc": "2024-01-02T11:00:00+00:00",
+      "last_timestamp_utc": "2024-12-31T21:30:00+00:00"
+    },
+    "final_holdout": {
+      "path": "notebook_outputs/07_m15_cnn_lstm_final_holdout_evaluation/tables/final_holdout_predictions.csv",
+      "sha256": "0a8ac74289ca277137cde00ad22a24abcb9ad1e0d7a7694d9d712aae895ad388",
+      "row_count": 13794,
+      "first_timestamp_utc": "2025-01-02T11:00:00+00:00",
+      "last_timestamp_utc": "2026-03-31T20:45:00+00:00"
+    }
+  }
+}

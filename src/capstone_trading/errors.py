@@ -23,3 +23,19 @@ class ArtifactValidationError(Step1VerificationError):
 
 class ModelLoadError(Step1VerificationError):
     """Raised when the frozen Keras model cannot be loaded or validated."""
+
+
+class Step2ParityError(RuntimeError):
+    """Base class for an expected Stage 1 Step 2 parity failure."""
+
+
+class HistoricalDataError(Step2ParityError):
+    """Raised when historical bars or model-ready reference data are invalid."""
+
+
+class FeatureParityError(Step2ParityError):
+    """Raised when reconstructed features differ from the official dataset."""
+
+
+class SequenceParityError(Step2ParityError):
+    """Raised when sequence continuity or alignment differs from Notebook 7."""
