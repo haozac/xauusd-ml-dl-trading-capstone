@@ -12,6 +12,9 @@ import pytest
 @pytest.mark.step2
 def test_formal_stage1_step2_gate_passes(tmp_path: Path) -> None:
     repository_root = Path(__file__).resolve().parents[2]
+    required = repository_root / "notebook_outputs" / "07_m15_cnn_lstm_final_holdout_evaluation" / "configuration" / "holdout_evaluation_complete.json"
+    if not required.exists():
+        pytest.skip("Local gitignored Notebook 7 artefacts are not available")
     report_path = tmp_path / "step2.json"
     column_path = tmp_path / "columns.csv"
     completed = subprocess.run(

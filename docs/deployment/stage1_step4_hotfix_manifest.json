@@ -1,0 +1,21 @@
+{
+  "patch_id": "stage1_step4_hotfix_v1_1",
+  "created_utc": "2026-07-04T01:20:28.636709+00:00",
+  "files": [
+    {
+      "path": "docs/deployment/stage1_step4_hotfix_v1_1.md",
+      "sha256": "d2594fbf211fbaf1ec392b39441a363ebce22ad08372db69432d256b8d71d14a",
+      "size_bytes": 868
+    },
+    {
+      "path": "src/capstone_trading/evaluation/trading_replay.py",
+      "sha256": "62ff9e5c094f04398d9bdac1026b9b989d6a34e08636be3ed7695750c517fd96",
+      "size_bytes": 31742
+    },
+    {
+      "path": "tests/unit/test_trading_replay.py",
+      "sha256": "b83777271df2fb355bde1f6a5568988e48cdfe54c21463eac075734851e63852",
+      "size_bytes": 5728
+    }
+  ]
+}

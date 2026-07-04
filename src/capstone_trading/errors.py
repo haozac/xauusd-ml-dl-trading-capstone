@@ -47,3 +47,11 @@ class Step3InferenceError(RuntimeError):
 
 class InferenceParityError(Step3InferenceError):
     """Raised when generated model probabilities differ from Notebook 7 predictions."""
+
+
+class Step4TradingReplayError(RuntimeError):
+    """Base class for an expected Stage 1 Step 4 replay-parity failure."""
+
+
+class TradingReplayError(Step4TradingReplayError):
+    """Raised when frozen Model A trading replay differs from Notebook 7."""

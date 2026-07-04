@@ -1,0 +1,54 @@
+{
+  "files": [
+    {
+      "path": "docs/deployment/stage1_step4_review.md",
+      "sha256": "af0f88479bd322b441103ed96f96e2b240464853e03c9f7bfeca974f5291f267",
+      "size_bytes": 3487
+    },
+    {
+      "path": "docs/deployment/stage1_step4_runbook.md",
+      "sha256": "3b31197d5c537c7ee3e4fc0b00ecc759f014420dde090ba5f6805d275a95cba2",
+      "size_bytes": 3066
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "b927163fc0faeb4c6d76b3cc5d7c351dd67499cc46fbb1601429ece22e05cc34",
+      "size_bytes": 959
+    },
+    {
+      "path": "scripts/deployment/run_model_a_replay_parity.py",
+      "sha256": "642f3e2101c1326cf7e7ca534392cbe266f8be4185b4375a639ca3642310229d",
+      "size_bytes": 17429
+    },
+    {
+      "path": "src/capstone_trading/errors.py",
+      "sha256": "6273afacfc29cd56579bfa6ed467b294f36c03f3b3a923820ed3c27646d1942c",
+      "size_bytes": 1855
+    },
+    {
+      "path": "src/capstone_trading/evaluation/trading_replay.py",
+      "sha256": "e53a34980d1edb7ec5a68298134d60433d9083379c0d30070c148898d46808bf",
+      "size_bytes": 29879
+    },
+    {
+      "path": "tests/integration/test_stage1_step2_real_data.py",
+      "sha256": "3fed46fdb80850629e3aff8cace5f85276aeb4633697f9178127ae14ced8e825",
+      "size_bytes": 1887
+    },
+    {
+      "path": "tests/integration/test_stage1_step4_model_a_replay.py",
+      "sha256": "135fe269b96cd9a87d6de74d70b485e404213c8a5092a2180bc6691a7519a359",
+      "size_bytes": 1845
+    },
+    {
+      "path": "tests/unit/test_trading_replay.py",
+      "sha256": "fc1f3fbca9f68cf126a63f08df865d699c0a47a5eac54347f3d88e05af2685bd",
+      "size_bytes": 4146
+    }
+  ],
+  "patch_id": "stage1_step4_patch_v1_0",
+  "purpose": "Frozen Model A historical trading replay parity",
+  "schema_version": 1,
+  "stage": 1,
+  "step": 4
+}
