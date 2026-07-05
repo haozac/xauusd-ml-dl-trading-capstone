@@ -1,0 +1,45 @@
+{
+  "files_added": [
+    "config/mt5_runtime_template.yaml",
+    "src/capstone_trading/runtime/mt5_readiness.py",
+    "scripts/deployment/run_mt5_environment_readiness.py",
+    "tests/unit/test_mt5_readiness.py",
+    "tests/integration/test_stage2_step1_mt5_readiness.py",
+    "docs/deployment/stage2_step1_runbook.md",
+    "docs/deployment/stage2_step1_review.md",
+    "docs/deployment/stage2_step1_patch_manifest.json"
+  ],
+  "patch_id": "stage2_step1_mt5_readiness_v1_0",
+  "safety": {
+    "demo_account_required_by_default": true,
+    "orders_enabled": false,
+    "trade_functions_allowed": false
+  },
+  "sha256": {
+    "config/mt5_runtime_template.yaml": "6b41af3d09e6eb30b0bd03e1d6a7f08b912d45c97568740efcf4a8a906b69565",
+    "docs/deployment/stage2_step1_review.md": "2689dd6878690de53b10f2848e46b4e34ac9e04033806f527aa4ca3053e1fc6a",
+    "docs/deployment/stage2_step1_runbook.md": "2337a0329d8993a3dbdee571b532e56fc585ef65c148188e7511172d71b44c87",
+    "scripts/deployment/__pycache__/run_mt5_environment_readiness.cpython-313.pyc": "2dacb02cfa54ca729fbada7b58329124a38cd3aedd85e0f2732a5bec8e152b90",
+    "scripts/deployment/run_mt5_environment_readiness.py": "fafa28ba3719302343ce3639892099d82fd381cb010380618232bbd51873557a",
+    "src/capstone_trading/runtime/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "src/capstone_trading/runtime/__pycache__/__init__.cpython-313.pyc": "08487c5e1c5b0dfa8629987a56992d51bc062e752cbe4ac183134f8d46d9cbc5",
+    "src/capstone_trading/runtime/__pycache__/mt5_readiness.cpython-313.pyc": "c5daaa2f3493cd86a99fdff9889ece26c4382c46f417a29b4a443773106c015b",
+    "src/capstone_trading/runtime/mt5_readiness.py": "8e78b6f2720f9c1980d6716fd09ed27189d310b5ffda150596c642578badc680",
+    "tests/integration/.pytest_cache/.gitignore": "3ed731b65d06150c138e2dadb0be0697550888a6b47eb8c45ecc9adba8b8e9bd",
+    "tests/integration/.pytest_cache/CACHEDIR.TAG": "37dc88ef9a0abeddbe81053a6dd8fdfb13afb613045ea1eb4a5c815a74a3bde4",
+    "tests/integration/.pytest_cache/README.md": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
+    "tests/integration/.pytest_cache/v/cache/nodeids": "e5b208dc1fb44d67d872eaa62fd24588045992c50fc3aef812ba2cfdd01d7ff4",
+    "tests/integration/__pycache__/test_stage2_step1_mt5_readiness.cpython-313-pytest-9.0.2.pyc": "db9a5bbf5ef134d1da4eed132c3021ea8c61ab92b9a6e75a4bf51c4ad2fe42f2",
+    "tests/integration/__pycache__/test_stage2_step1_mt5_readiness.cpython-313.pyc": "5d462b8dfee5762cc4e54bbda4162ad44ecd517c04de1faeeb1d4ef845819bcc",
+    "tests/integration/test_stage2_step1_mt5_readiness.py": "fffe079803b062fb83132b72871616de6ac90e33c43a75eb2aa53de031ce8681",
+    "tests/unit/.pytest_cache/.gitignore": "3ed731b65d06150c138e2dadb0be0697550888a6b47eb8c45ecc9adba8b8e9bd",
+    "tests/unit/.pytest_cache/CACHEDIR.TAG": "37dc88ef9a0abeddbe81053a6dd8fdfb13afb613045ea1eb4a5c815a74a3bde4",
+    "tests/unit/.pytest_cache/README.md": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad",
+    "tests/unit/.pytest_cache/v/cache/nodeids": "4d66c52a174c61375a2bfa6d1226cb45aa5f4dc5470f746df56c92cdd8c95f10",
+    "tests/unit/__pycache__/test_mt5_readiness.cpython-313-pytest-9.0.2.pyc": "bceb264725e18eb847c37b41f7fab7c2329b129fb1fb1e6bbf3eab40dc1acb8f",
+    "tests/unit/__pycache__/test_mt5_readiness.cpython-313.pyc": "f3e99c64f4ba05fce57a8bf963293e5746134e174fb4609d7a9db46f13dd0e9e",
+    "tests/unit/test_mt5_readiness.py": "936b699df86da0792c73b787f21c9d45931f83711cc7992ff5a3ee4c94c0f364"
+  },
+  "stage": 2,
+  "step": 1
+}

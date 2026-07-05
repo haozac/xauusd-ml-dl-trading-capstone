@@ -1,0 +1,31 @@
+# Stage 2 broker/runtime-only config.
+# Do not place account passwords, API secrets, or research/model parameters here.
+# You may copy this to config/mt5_runtime_local.yaml and pass:
+#   --runtime-config config/mt5_runtime_local.yaml
+
+terminal:
+  # Optional path to terminal64.exe. Leave null to let MetaTrader5.initialize() auto-detect.
+  # Example Windows path:
+  # path: "C:/Program Files/MetaTrader 5/terminal64.exe"
+  path: null
+
+symbol:
+  # Brokers use different gold symbol names. The readiness script tries these in order.
+  candidates:
+    - XAUUSD
+    - XAUUSDm
+    - XAUUSD.
+    - XAUUSD.pro
+    - GOLD
+  require_visible: true
+
+data:
+  timeframe: M15
+  bars_to_fetch: 200
+  min_completed_bars: 120
+  # The market may be closed on weekends. A stale latest bar becomes a warning, not a hard failure.
+  allow_market_closed_stale_bar: true
+  max_latest_closed_bar_age_minutes_warning: 4320
+
+safety:
+  require_demo_account: true
