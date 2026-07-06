@@ -1,0 +1,38 @@
+{
+  "patch_name": "stage2_step2a_patch_v1_1",
+  "stage": 2,
+  "step": "2A",
+  "version": "1.1",
+  "purpose": "Hotfix Stage 2 Step 2A timestamp handling by converting Dukascopy MT5 server time to canonical UTC before feature generation and shadow signal logging.",
+  "reason_for_hotfix": "v1.0 watch output showed negative latest-bar age because Dukascopy MT5 server timestamps were treated as UTC.",
+  "changed_files": [
+    "config/mt5_shadow_runtime_template.yaml",
+    "src/capstone_trading/runtime/mt5_shadow.py",
+    "scripts/deployment/run_mt5_shadow_logger.py",
+    "tests/unit/test_mt5_shadow.py",
+    "docs/deployment/stage2_step2a_runbook.md",
+    "docs/deployment/stage2_step2a_review.md",
+    "docs/deployment/stage2_step2a_patch_manifest.json"
+  ],
+  "new_outputs": [
+    "runtime/reports/stage2_step2a_v1_1_mt5_shadow_logger.json",
+    "runtime/reports/stage2_step2a_v1_1_latest_completed_m15_bars.csv",
+    "runtime/reports/stage2_step2a_v1_1_latest_shadow_signal.csv",
+    "runtime/shadow/stage2_step2a_v1_1_shadow_signals.csv",
+    "runtime/state/stage2_step2a_v1_1_shadow_state.json"
+  ],
+  "safety_contract": {
+    "orders_enabled": false,
+    "shadow_only": true,
+    "order_send_allowed": false,
+    "completed_bars_only": true
+  },
+  "time_contract": {
+    "policy": "fixed_broker_server_offset_to_utc",
+    "default_mt5_server_time_offset_hours": 3,
+    "dukascopy_summer_offset_hours": 3,
+    "dukascopy_winter_offset_hours": 2,
+    "canonical_feature_timezone": "UTC"
+  },
+  "packaging_notes": "No __pycache__ or .pytest_cache directories are included."
+}

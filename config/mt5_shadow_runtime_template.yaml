@@ -1,0 +1,49 @@
+# Stage 2 Step 2A v1.1 single-terminal MT5 shadow logger config.
+# Do not store login numbers, passwords, API secrets, or frozen model parameters here.
+# Manual prerequisite: open MT5 and log in to a DEMO account before running.
+
+terminal:
+  # Optional terminal64.exe path. You can also pass --terminal-path at runtime.
+  # Example:
+  # path: "C:/Program Files/MetaTrader 5/terminal64.exe"
+  path: null
+
+symbol:
+  candidates:
+    - XAUUSD
+    - XAUUSDm
+    - XAUUSD.
+    - XAUUSD.pro
+    - GOLD
+  require_visible: true
+
+data:
+  timeframe: M15
+  # Needs enough history for 200-bar indicators plus 48-bar sequence readiness.
+  bars_to_fetch: 420
+  min_completed_bars: 260
+  allow_market_closed_stale_bar: true
+  max_latest_closed_bar_age_minutes_warning: 4320
+
+safety:
+  require_demo_account: true
+  orders_enabled: false
+
+# Dukascopy documents MT4/MT5 server time as GMT+3 in summer and GMT+2 in winter.
+# The frozen research dataset is UTC-aligned, so live MT5 server timestamps must
+# be shifted back into canonical UTC before feature generation and signal logging.
+time:
+  mt5_server_time_offset_hours: 3
+  enforce_no_future_canonical_bar: true
+  max_future_canonical_bar_minutes: 2
+
+shadow:
+  minimum_feature_rows: 180
+  minimum_valid_sequences: 1
+  append_signals: true
+  # skip = repeated --once calls on the same closed bar do not duplicate the append-only signal log.
+  # append = every run appends a row even if event_time is unchanged.
+  duplicate_policy: skip
+  state_path: runtime/state/stage2_step2a_v1_1_shadow_state.json
+  signals_csv_path: runtime/shadow/stage2_step2a_v1_1_shadow_signals.csv
+  latest_signal_csv_path: runtime/reports/stage2_step2a_v1_1_latest_shadow_signal.csv
