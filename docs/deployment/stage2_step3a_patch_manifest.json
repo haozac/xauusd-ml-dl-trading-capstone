@@ -1,0 +1,20 @@
+{
+  "patch": "stage2_step3a_patch_v1_0",
+  "purpose": "Freeze broker-specific execution controls before Stage 3 order preflight",
+  "no_order_stage": true,
+  "files": [
+    "config/broker_execution_controls_template.yaml",
+    "src/capstone_trading/runtime/broker_execution_controls.py",
+    "scripts/deployment/freeze_broker_execution_controls.py",
+    "tests/unit/test_broker_execution_controls.py",
+    "tests/integration/test_stage2_step3a_broker_execution_controls.py",
+    "docs/deployment/stage2_step3a_runbook.md",
+    "docs/deployment/stage2_step3a_review.md",
+    "docs/deployment/stage2_step3a_patch_manifest.json"
+  ],
+  "expected_outputs": [
+    "runtime/reports/stage2_step3a_broker_execution_controls_freeze.json",
+    "runtime/reports/stage2_step3a_broker_execution_controls_summary.csv",
+    "config/broker_execution_controls_frozen.yaml"
+  ]
+}

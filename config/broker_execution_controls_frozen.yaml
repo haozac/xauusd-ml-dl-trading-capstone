@@ -1,0 +1,45 @@
+# Auto-written by Stage 2 Step 3A. Do not edit casually; use a formal patch.
+
+metadata:
+  controls_version: "stage2_step3a_v1_0"
+
+broker:
+  broker_company_expected: "Dukascopy Bank SA"
+  server_expected: "Dukascopy-demo-mt5-1"
+  symbol: "XAUUSD"
+  timeframe: "M15"
+
+time:
+  canonical_time_basis: "UTC"
+  mt5_server_time_policy: "Dukascopy GMT+3 summer / GMT+2 winter, convert to canonical UTC"
+  mt5_server_time_offset_hours_current: 3
+
+execution_limits:
+  order_volume_lots: 0.01
+  max_open_volume_lots_per_model: 0.01
+  max_positions_per_model: 1
+  max_spread_points_for_entry: 800
+  max_deviation_points_for_stage3_order_request: 200
+  capstone_leverage_cap: 10.0
+  minimum_demo_equity_recommendation_sgd: 1000.0
+
+order_policy:
+  broker_reported_filling_mode_policy: "Use broker-reported symbol_info.filling_mode as candidate; Stage 3 order_check must validate before order_send."
+  broker_side_stop_loss_policy: "Disabled for tiny plumbing test; strategy/risk engine manages exits. Revisit before unattended final run."
+  broker_side_take_profit_policy: "Disabled; strategy/risk engine manages exits."
+  stage2_orders_enabled: false
+  stage3_order_check_required_before_order_send: true
+  stage3_first_order_test_volume_lots: 0.01
+
+identifiers:
+  model_a_magic_number: 26070101
+  model_b_magic_number: 26070102
+  model_a_order_comment: "CAPSTONE_MODEL_A"
+  model_b_order_comment: "CAPSTONE_MODEL_B"
+
+model_policy:
+  model_b_variant_for_first_controlled_execution: "MODEL_B_V2_CURRENT"
+  max_successful_entries_per_model_per_utc_day: 1
+
+review_assumptions:
+  review_usd_sgd_rate_assumption: 1.35
