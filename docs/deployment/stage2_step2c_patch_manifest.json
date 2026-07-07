@@ -1,0 +1,29 @@
+{
+  "patch_id": "stage2_step2c_patch_v1_0",
+  "stage": 2,
+  "step": "2C",
+  "purpose": "Compare current Model B V2 against fixed Model B minimum-hold 3-bar diagnostic candidate before order execution.",
+  "files_added": [
+    "src/capstone_trading/evaluation/model_b_min_hold.py",
+    "scripts/deployment/run_model_b_min_hold_comparison.py",
+    "tests/unit/test_model_b_min_hold.py",
+    "tests/integration/test_stage2_step2c_model_b_min_hold.py",
+    "docs/deployment/stage2_step2c_runbook.md",
+    "docs/deployment/stage2_step2c_review.md",
+    "docs/deployment/stage2_step2c_patch_manifest.json"
+  ],
+  "files_modified": [],
+  "safety_properties": {
+    "mt5_used": false,
+    "orders_enabled": false,
+    "model_retraining": false,
+    "threshold_search": false,
+    "minimum_hold_bars_candidate": 3,
+    "diagnostic_only": true
+  },
+  "expected_outputs": [
+    "runtime/reports/stage2_step2c_model_b_min_hold_comparison.json",
+    "runtime/reports/stage2_step2c_model_b_variant_metrics_by_cost.csv",
+    "runtime/reports/stage2_step2c_model_b_min_hold_comparison.csv"
+  ]
+}
