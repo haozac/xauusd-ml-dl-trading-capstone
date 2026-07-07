@@ -1,0 +1,28 @@
+{
+  "expected_files_modified": [
+    "src/capstone_trading/runtime/order_preflight.py",
+    "tests/unit/test_order_preflight.py",
+    "docs/deployment/stage3_step1_runbook.md",
+    "docs/deployment/stage3_step1_review.md",
+    "docs/deployment/stage3_step1_patch_manifest.json"
+  ],
+  "expected_outputs": [
+    "runtime/reports/stage3_step1_order_permission_preflight.json",
+    "runtime/reports/stage3_step1_order_check_results.csv"
+  ],
+  "files": [
+    "src/capstone_trading/runtime/order_preflight.py",
+    "scripts/deployment/run_order_permission_preflight.py",
+    "tests/unit/test_order_preflight.py",
+    "tests/integration/test_stage3_step1_order_preflight.py",
+    "docs/deployment/stage3_step1_runbook.md",
+    "docs/deployment/stage3_step1_review.md",
+    "docs/deployment/stage3_step1_patch_manifest.json"
+  ],
+  "hotfix_reason": "v1.0 live preflight reached MT5 but order_check/order_calc_margin failed with last_error (-2, Unnamed arguments not allowed); use named arguments first and keep metadata out of MT5 request dict.",
+  "order_check_allowed": true,
+  "order_send_allowed": false,
+  "patch": "stage3_step1_patch_v1_0",
+  "patch_version": "stage3_step1_patch_v1_1",
+  "purpose": "Order permission and order_check preflight without order_send"
+}
