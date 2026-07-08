@@ -1,0 +1,32 @@
+{
+  "patch": "stage3_step2_patch_v1_1",
+  "stage": 3,
+  "step": "2 v1.1",
+  "purpose": "Tiny controlled MT5 demo order open/close retest with robust history audit capture",
+  "adds_or_updates": [
+    "src/capstone_trading/runtime/order_execution_probe.py",
+    "scripts/deployment/run_tiny_demo_order_test.py",
+    "tests/unit/test_order_execution_probe.py",
+    "tests/integration/test_stage3_step2_tiny_order.py",
+    "docs/deployment/stage3_step2_runbook.md",
+    "docs/deployment/stage3_step2_review.md",
+    "docs/deployment/stage3_step2_patch_manifest.json"
+  ],
+  "safety": {
+    "requires_explicit_confirm_send_token": true,
+    "only_open_side_v1_1": "BUY",
+    "volume_lots": 0.01,
+    "requires_no_existing_xauusd_position": true,
+    "requires_no_existing_xauusd_pending_order": true,
+    "immediate_close": true,
+    "not_strategy_runner": true,
+    "new_history_audit_requires_recovery": true,
+    "outputs_use_v1_1_names_to_preserve_v1_0_evidence": true
+  },
+  "review_notes": [
+    "Allows history_orders_get in addition to history_deals_get.",
+    "Uses wider +/-2 day history window and retries after close.",
+    "Filters history by symbol, magic, CP_S3P2 comment, order ticket, or position ticket.",
+    "Formal gate now requires broker history records recovered."
+  ]
+}
