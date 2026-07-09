@@ -1,0 +1,26 @@
+{
+  "patch": "stage3_step3a_patch_v1_0",
+  "stage": 3,
+  "step": "3A",
+  "purpose": "Model B current controlled execution dry-run with no order_send",
+  "adds_or_updates": [
+    "src/capstone_trading/runtime/model_b_controlled_dry_run.py",
+    "scripts/deployment/run_model_b_controlled_dry_run.py",
+    "tests/unit/test_model_b_controlled_dry_run.py",
+    "tests/integration/test_stage3_step3a_model_b_dry_run.py",
+    "docs/deployment/stage3_step3a_runbook.md",
+    "docs/deployment/stage3_step3a_review.md",
+    "docs/deployment/stage3_step3a_patch_manifest.json"
+  ],
+  "safety": {
+    "order_send_allowed": false,
+    "order_check_allowed_for_intent": true,
+    "model": "MODEL_B_V2_CURRENT",
+    "volume_lots": 0.01,
+    "requires_stage3_step2_v1_1_pass": true,
+    "requires_no_actual_xauusd_position": true,
+    "requires_no_pending_xauusd_order": true,
+    "completed_m15_only": true,
+    "recommended_runtime_minutes": 120
+  }
+}
