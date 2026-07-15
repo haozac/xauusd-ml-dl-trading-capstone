@@ -1,0 +1,26 @@
+{
+  "patch_name": "stage3_step3b_closeout_patch_v1_0",
+  "stage": 3,
+  "step": "3B-CLOSEOUT",
+  "purpose": "Formal offline audit of an incrementally logged Model B controlled live run stopped with Ctrl+C while flat",
+  "files": [
+    "src/capstone_trading/runtime/model_b_live_closeout.py",
+    "scripts/deployment/audit_model_b_controlled_live_closeout.py",
+    "tests/unit/test_model_b_live_closeout.py",
+    "tests/integration/test_stage3_step3b_closeout_audit.py",
+    "docs/deployment/stage3_step3b_closeout_runbook.md",
+    "docs/deployment/stage3_step3b_closeout_review.md",
+    "docs/deployment/stage3_step3b_closeout_patch_manifest.json"
+  ],
+  "audited_run_id": "stage3_step3b_20260713T114117Z",
+  "may_connect_to_mt5": false,
+  "may_call_order_check": false,
+  "may_call_order_send": false,
+  "frozen_entry_threshold": 0.55,
+  "frozen_spread_gate_points": 800,
+  "minimum_fresh_completed_m15_events": 8,
+  "requires_wide_spread_observation": true,
+  "expected_outcome": "PASS_NO_ELIGIBLE_SIGNAL_MANUAL_STOP",
+  "next_step_after_pass": "Stage 3 Step 4A - dual-account and dual-terminal readiness design",
+  "not_final_14_day_run": true
+}
