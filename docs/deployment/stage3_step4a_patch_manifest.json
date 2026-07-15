@@ -1,0 +1,20 @@
+{
+  "patch": "stage3_step4a_patch_v1_0",
+  "stage": 3,
+  "step": "4A",
+  "purpose": "Dual-account and dual-terminal readiness design and no-order inspection",
+  "files": [
+    "config/dual_terminal_runtime_template.yaml",
+    "src/capstone_trading/runtime/dual_terminal_readiness.py",
+    "scripts/deployment/run_dual_terminal_readiness.py",
+    "tests/unit/test_dual_terminal_readiness.py",
+    "tests/integration/test_stage3_step4a_dual_terminal_readiness.py",
+    "docs/deployment/stage3_step4a_runbook.md",
+    "docs/deployment/stage3_step4a_review.md"
+  ],
+  "safety": {
+    "order_check_allowed": false,
+    "order_send_allowed": false,
+    "passwords_in_config": false
+  }
+}

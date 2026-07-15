@@ -1,0 +1,47 @@
+# Copy this file to config/dual_terminal_runtime.yaml and edit only the two terminal paths.
+# Do not store account passwords in this file. Each terminal must already be logged in manually.
+roles:
+  model_a:
+    terminal_path: "C:\\Program Files\\Dukascopy MetaTrader 5 Model A\\terminal64.exe"
+    runtime_root: "runtime/model_a"
+    magic_number: 26070101
+    order_comment: "CAPSTONE_MODEL_A"
+  model_b:
+    terminal_path: "C:\\Program Files\\Dukascopy MetaTrader 5 Model B\\terminal64.exe"
+    runtime_root: "runtime/model_b"
+    magic_number: 26070102
+    order_comment: "CAPSTONE_MODEL_B"
+
+broker:
+  company: "Dukascopy Bank SA"
+  server: "Dukascopy-demo-mt5-1"
+  symbol: "XAUUSD"
+
+data:
+  timeframe: "M15"
+  bars_to_fetch: 260
+  min_completed_bars: 200
+  mt5_server_time_offset_hours: 3
+
+safety:
+  require_demo_account: true
+  require_terminal_trade_allowed: true
+  require_trade_api_enabled: true
+  require_account_trade_allowed: true
+  require_account_expert_allowed: true
+  require_distinct_accounts: true
+  require_distinct_terminal_paths: true
+  require_distinct_data_paths: true
+  require_no_open_symbol_positions: true
+  require_no_pending_symbol_orders: true
+  require_same_currency: true
+  require_same_margin_mode: true
+  require_same_symbol_contract: true
+  max_latest_bar_difference_minutes: 15
+
+capital:
+  min_equity_per_account_sgd: 1000
+  max_starting_balance_difference_percent: 1.0
+  capstone_leverage_cap: 10.0
+  usd_sgd_review_rate: 1.35
+  test_volume_lots: 0.01
