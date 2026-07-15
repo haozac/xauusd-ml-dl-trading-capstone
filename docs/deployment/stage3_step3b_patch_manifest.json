@@ -1,0 +1,27 @@
+{
+  "patch_name": "stage3_step3b_patch_v1_1",
+  "stage": 3,
+  "step": "3B",
+  "purpose": "Non-fatal spread-gate handling for Model B controlled live execution",
+  "files": [
+    "src/capstone_trading/runtime/model_b_controlled_live.py",
+    "scripts/deployment/run_model_b_controlled_live.py",
+    "tests/unit/test_model_b_controlled_live.py",
+    "tests/integration/test_stage3_step3b_model_b_live.py",
+    "docs/deployment/stage3_step3b_runbook.md",
+    "docs/deployment/stage3_step3b_review.md",
+    "docs/deployment/stage3_step3b_patch_manifest.json"
+  ],
+  "requires_previous_gates": [
+    "Stage 3 Step 2 v1.1 formal PASS",
+    "Stage 3 Step 3A formal PASS"
+  ],
+  "may_call_order_send": true,
+  "confirmation_token_required": "I_UNDERSTAND_STAGE3_STEP3B_MODEL_B_ORDER_SEND",
+  "default_volume_lots": 0.01,
+  "entry_spread_gate_points": 800,
+  "wide_spread_policy": "block new entry and continue; never block risk-reducing exit",
+  "thresholds_changed": false,
+  "default_close_at_end": true,
+  "not_final_14_day_run": true
+}
