@@ -1,0 +1,68 @@
+{
+  "patch_version": "stage3_step4b_v1_2",
+  "stage": 3,
+  "step": "4B",
+  "purpose": "concurrent dual-terminal shadow synchronisation with no order_check or order_send",
+  "change_from_v1_1": {
+    "classification": "live MT5 Python API invocation correction and failure-report accuracy correction",
+    "production_runtime_changed": true,
+    "reason": "The first live run returned 0.0 from both order_calc_margin calls before any shadow event. MetaQuotes documents margin and profit arguments as required unnamed parameters, while v1.1 attempted keyword arguments first.",
+    "corrections": [
+      "Call order_calc_margin and order_calc_profit only with documented positional arguments.",
+      "Record the broker calculation call mode in evidence.",
+      "Include last_error() in any remaining zero or None calculation failure.",
+      "Do not invent a forbidden-order-call failure when an economic payload is missing because a worker failed earlier."
+    ],
+    "model_or_strategy_changed": false,
+    "terminal_or_account_configuration_changed": false,
+    "step4b_command_changed": false
+  },
+  "safety": {
+    "orders_enabled": false,
+    "order_check_allowed": false,
+    "order_send_allowed": false,
+    "calculation_only_methods": [
+      "order_calc_margin",
+      "order_calc_profit"
+    ],
+    "forbidden_call_ast_scan": "PASS"
+  },
+  "internal_review": {
+    "python_compile": "PASS",
+    "focused_tests": "18 passed",
+    "integration_scaffold": "1 passed, 1 live integration skipped",
+    "cache_files_removed": true
+  },
+  "files": [
+    {
+      "path": "docs/deployment/stage3_step4b_review.md",
+      "sha256": "0fcb16d18400ad6b5611e6a80d8e74486c48b1bd102fbed03557aee50e8dd277",
+      "size_bytes": 3196
+    },
+    {
+      "path": "docs/deployment/stage3_step4b_runbook.md",
+      "sha256": "125f18de32aaf823a01be6e05d0d8c5bfdbaef45fe71fc089c500041f5767e42",
+      "size_bytes": 4573
+    },
+    {
+      "path": "scripts/deployment/run_dual_terminal_shadow_sync.py",
+      "sha256": "ce66ea0a90728e4c4fbfab108c8ac9fa1c68e15cb65e490ba64428890333fac4",
+      "size_bytes": 34277
+    },
+    {
+      "path": "src/capstone_trading/runtime/dual_terminal_shadow_sync.py",
+      "sha256": "2525a91bd12bb2e67fce49c969ef46dfc5b10d4baedd75d58afc8b46ccafcf7b",
+      "size_bytes": 43588
+    },
+    {
+      "path": "tests/integration/test_stage3_step4b_dual_terminal_shadow_sync.py",
+      "sha256": "90254ec8ee72349b2e536998a35aeb26510a7b50df5bfad40218a004edaff9cd",
+      "size_bytes": 1318
+    },
+    {
+      "path": "tests/unit/test_dual_terminal_shadow_sync.py",
+      "sha256": "cf0563746e8e97f313f9e4fc384c33d14e743639592ed1beecd67339f0149bb7",
+      "size_bytes": 14800
+    }
+  ]
+}
