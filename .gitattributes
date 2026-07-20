@@ -1,0 +1,5 @@
+config/stage0_freeze_manifest.json text eol=lf
+config/model_a_frozen.yaml text eol=lf
+config/model_b_v2_frozen.yaml text eol=lf
+docs/deployment/deployment_specification_v1.md text eol=lf
+docs/deployment/model_b_v2_rationale.md text eol=lf
