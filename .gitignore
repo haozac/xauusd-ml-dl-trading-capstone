@@ -141,7 +141,7 @@ deployment/logs/
 deployment/database/
 deployment/databases/
 deployment/exports/private/
-runtime/
+/runtime/
 state/
 logs/
 *.jsonl
