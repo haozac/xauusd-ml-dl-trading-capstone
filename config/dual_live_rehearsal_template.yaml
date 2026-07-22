@@ -1,0 +1,41 @@
+metadata:
+  config_version: dual_live_rehearsal_v1_0
+  purpose: local VPS dual-model rehearsal runtime
+  contains_credentials: false
+  commit_this_template: true
+  commit_local_copy: false
+
+runtime:
+  execution_mode: shadow
+  orders_enabled: false
+  duration_hours: 24
+  poll_seconds: 30
+  max_iterations: 0
+  flatten_on_clean_stop: true
+  allow_onednn: false
+
+supervisor:
+  poll_seconds: 10
+  stale_heartbeat_seconds: 180
+  startup_grace_seconds: 240
+  shutdown_timeout_seconds: 180
+  max_restarts_per_role: 3
+  restart_window_minutes: 60
+  restart_cooldown_seconds: 10
+
+models:
+  model_a:
+    terminal_path: 'C:\Program Files\Dukascopy MetaTrader 5 Model A\terminal64.exe'
+    expected_login_suffix: 'REPLACE_MODEL_A_LAST4'
+  model_b:
+    terminal_path: 'C:\Program Files\Dukascopy MetaTrader 5 Model B\terminal64.exe'
+    expected_login_suffix: 'REPLACE_MODEL_B_LAST4'
+
+paths:
+  runtime_root: runtime/dual_live_rehearsal_shadow
+  worker_script: scripts/deployment/run_dual_strategy_worker.py
+  model_a_config: config/model_a_frozen.yaml
+  model_b_config: config/model_b_v2_frozen.yaml
+  freeze_manifest: config/stage0_freeze_manifest.json
+  shadow_runtime_config: config/mt5_shadow_runtime_template.yaml
+  broker_controls: runtime/frozen/vps_rehearsal_broker_execution_controls_frozen.yaml
