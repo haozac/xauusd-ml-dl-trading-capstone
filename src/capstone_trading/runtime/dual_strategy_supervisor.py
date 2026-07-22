@@ -71,6 +71,8 @@ class WorkerProcess:
     restart_timestamps: list[str] = field(default_factory=list)
     last_exit_code: int | None = None
     last_failure_reason: str | None = None
+    runtime_pid: int | None = None
+    runtime_run_id: str | None = None
 
 
 def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -277,6 +279,7 @@ def _launch_worker(settings: SupervisorSettings, role: str, *, starts: int, rest
     creationflags = 0
     if os.name == "nt":
         creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    launch_started_utc = utc_now_iso()
     process = subprocess.Popen(
         command,
         cwd=str(settings.repo_root),
@@ -291,7 +294,7 @@ def _launch_worker(settings: SupervisorSettings, role: str, *, starts: int, rest
         process=process,
         log_handle=handle,
         log_path=log_path,
-        started_utc=utc_now_iso(),
+        started_utc=launch_started_utc,
         starts=starts,
         restart_timestamps=list(restarts),
     )
@@ -309,12 +312,53 @@ def _terminate_worker(worker: WorkerProcess, timeout_seconds: int) -> None:
     if worker.process.poll() is not None:
         _close_handle(worker)
         return
-    worker.process.terminate()
     try:
-        worker.process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        worker.process.kill()
-        worker.process.wait(timeout=30)
+        if os.name == "nt":
+            completed = subprocess.run(
+                [
+                    "taskkill",
+                    "/PID",
+                    str(worker.process.pid),
+                    "/T",
+                    "/F",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0 and worker.process.poll() is None:
+                raise DualSupervisorError(
+                    "Unable to terminate Windows worker process tree "
+                    f"for {worker.role} launcher PID {worker.process.pid}: "
+                    f"{completed.stdout} {completed.stderr}"
+                )
+        else:
+            worker.process.terminate()
+        try:
+            worker.process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                completed = subprocess.run(
+                    [
+                        "taskkill",
+                        "/PID",
+                        str(worker.process.pid),
+                        "/T",
+                        "/F",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if completed.returncode != 0 and worker.process.poll() is None:
+                    raise DualSupervisorError(
+                        "Windows worker process tree remained alive after timeout "
+                        f"for {worker.role} launcher PID {worker.process.pid}: "
+                        f"{completed.stdout} {completed.stderr}"
+                    )
+            else:
+                worker.process.kill()
+            worker.process.wait(timeout=30)
     finally:
         _close_handle(worker)
 
@@ -327,24 +371,36 @@ def _heartbeat_for_worker(
     settings: SupervisorSettings,
     worker: WorkerProcess,
 ) -> dict[str, Any] | None:
-    """Return only a heartbeat owned by the currently supervised PID.
+    """Return only a heartbeat from the current worker generation.
 
-    Heartbeat files survive process crashes and supervisor restarts.  Treating a
-    recent heartbeat from an old PID as current could hide a failed worker for up
-    to the stale-heartbeat timeout, so PID and role ownership are mandatory.
+    On Windows, ``venv/Scripts/python.exe`` can act as a launcher whose PID
+    differs from ``os.getpid()`` inside the actual interpreter.  Therefore the
+    supervisor must not require the launcher PID and heartbeat PID to be equal.
+    Ownership is established by role plus a heartbeat ``started_utc`` that is
+    not older than the supervised launch generation.  Stale heartbeats from a
+    previous worker generation remain rejected.
     """
 
     heartbeat = _heartbeat_for(settings, worker.role)
     if not heartbeat:
         return None
-    try:
-        heartbeat_pid = int(heartbeat.get("pid", 0) or 0)
-    except (TypeError, ValueError):
-        return None
-    if heartbeat_pid != int(worker.process.pid):
-        return None
     if str(heartbeat.get("role", "")) != worker.role:
         return None
+    heartbeat_started = _parse_time(heartbeat.get("started_utc"))
+    worker_started = _parse_time(worker.started_utc)
+    if heartbeat_started is None or worker_started is None:
+        return None
+    if heartbeat_started < worker_started:
+        return None
+    try:
+        runtime_pid = int(heartbeat.get("pid", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if runtime_pid <= 0:
+        return None
+    worker.runtime_pid = runtime_pid
+    run_id = str(heartbeat.get("run_id", "") or "").strip()
+    worker.runtime_run_id = run_id or None
     return heartbeat
 
 
@@ -375,6 +431,13 @@ def _worker_view(settings: SupervisorSettings, worker: WorkerProcess) -> dict[st
     return {
         "role": worker.role,
         "pid": worker.process.pid,
+        "launcher_pid": worker.process.pid,
+        "runtime_pid": (
+            None if heartbeat is None else int(heartbeat.get("pid", 0) or 0)
+        ),
+        "runtime_run_id": (
+            None if heartbeat is None else heartbeat.get("run_id")
+        ),
         "running": worker.process.poll() is None,
         "exit_code": worker.process.poll(),
         "started_utc": worker.started_utc,
@@ -442,7 +505,7 @@ def _worker_closeout_review(
     final_path = settings.paths.runtime_root / worker.role / "final_report.json"
     heartbeat_path = settings.paths.runtime_root / worker.role / "heartbeat.json"
     final_report = _read_json(final_path)
-    heartbeat = _read_json(heartbeat_path)
+    heartbeat = _heartbeat_for_worker(settings, worker)
     exit_code = worker.process.poll()
     state = (final_report or {}).get("state", {})
     if not isinstance(state, Mapping):
@@ -462,7 +525,6 @@ def _worker_closeout_review(
         virtual_flat = False
     heartbeat_stopped = bool(
         heartbeat
-        and int(heartbeat.get("pid", 0) or 0) == int(worker.process.pid)
         and heartbeat.get("role") == worker.role
         and heartbeat.get("status") == "STOPPED"
     )

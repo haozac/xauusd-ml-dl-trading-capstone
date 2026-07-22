@@ -10,6 +10,7 @@ from capstone_trading.runtime.dual_strategy_supervisor import (
     SupervisorSettings,
     WorkerProcess,
     _heartbeat_for_worker,
+    _terminate_worker,
     _worker_command,
 )
 
@@ -21,6 +22,31 @@ class FakeProcess:
 
     def poll(self) -> int | None:
         return self.exit_code
+
+
+
+
+@dataclass
+class FakeManagedProcess:
+    pid: int
+    exit_code: int | None = None
+    terminate_called: bool = False
+    kill_called: bool = False
+
+    def poll(self) -> int | None:
+        return self.exit_code
+
+    def wait(self, timeout: int | None = None) -> int:
+        self.exit_code = 1
+        return self.exit_code
+
+    def terminate(self) -> None:
+        self.terminate_called = True
+        self.exit_code = 1
+
+    def kill(self) -> None:
+        self.kill_called = True
+        self.exit_code = 1
 
 
 def settings(tmp_path: Path, *, orders_enabled: bool = False) -> SupervisorSettings:
@@ -69,33 +95,48 @@ def worker(tmp_path: Path, *, role: str, pid: int) -> WorkerProcess:
     )
 
 
-def test_heartbeat_must_belong_to_current_worker_pid(tmp_path: Path) -> None:
+def test_current_generation_heartbeat_accepts_runtime_pid_different_from_launcher(
+    tmp_path: Path,
+) -> None:
     config = settings(tmp_path)
     current = worker(tmp_path, role="model_a", pid=222)
+    current.started_utc = "2026-07-21T00:00:00+00:00"
     heartbeat_path = config.paths.runtime_root / "model_a" / "heartbeat.json"
     write_json_atomic(
         heartbeat_path,
         {
+            "run_id": "dual_model_a_current",
             "role": "model_a",
             "pid": 111,
             "status": "RUNNING",
-            "updated_utc": "2026-07-21T00:00:00+00:00",
-        },
-    )
-    assert _heartbeat_for_worker(config, current) is None
-
-    write_json_atomic(
-        heartbeat_path,
-        {
-            "role": "model_a",
-            "pid": 222,
-            "status": "RUNNING",
-            "updated_utc": "2026-07-21T00:00:00+00:00",
+            "started_utc": "2026-07-21T00:00:01+00:00",
+            "updated_utc": "2026-07-21T00:00:02+00:00",
         },
     )
     accepted = _heartbeat_for_worker(config, current)
     assert accepted is not None
-    assert accepted["pid"] == 222
+    assert accepted["pid"] == 111
+    assert current.runtime_pid == 111
+    assert current.runtime_run_id == "dual_model_a_current"
+
+
+def test_previous_generation_heartbeat_is_rejected(tmp_path: Path) -> None:
+    config = settings(tmp_path)
+    current = worker(tmp_path, role="model_a", pid=222)
+    current.started_utc = "2026-07-21T00:01:00+00:00"
+    heartbeat_path = config.paths.runtime_root / "model_a" / "heartbeat.json"
+    write_json_atomic(
+        heartbeat_path,
+        {
+            "run_id": "dual_model_a_previous",
+            "role": "model_a",
+            "pid": 111,
+            "status": "RUNNING",
+            "started_utc": "2026-07-21T00:00:00+00:00",
+            "updated_utc": "2026-07-21T00:00:30+00:00",
+        },
+    )
+    assert _heartbeat_for_worker(config, current) is None
 
 
 def test_heartbeat_role_mismatch_is_rejected(tmp_path: Path) -> None:
@@ -105,10 +146,12 @@ def test_heartbeat_role_mismatch_is_rejected(tmp_path: Path) -> None:
     write_json_atomic(
         heartbeat_path,
         {
+            "run_id": "dual_model_a_wrong_role",
             "role": "model_a",
-            "pid": 333,
+            "pid": 444,
             "status": "RUNNING",
-            "updated_utc": "2026-07-21T00:00:00+00:00",
+            "started_utc": "2026-07-21T00:00:01+00:00",
+            "updated_utc": "2026-07-21T00:00:02+00:00",
         },
     )
     assert _heartbeat_for_worker(config, current) is None
@@ -159,10 +202,12 @@ def test_shadow_closeout_requires_clean_exit_report_and_broker_flat(
     write_json_atomic(
         role_root / "heartbeat.json",
         {
+            "run_id": "dual_model_a_closeout",
             "role": "model_a",
-            "pid": 444,
+            "pid": 777,
             "status": "STOPPED",
-            "updated_utc": "2026-07-21T00:00:00+00:00",
+            "started_utc": "2026-07-21T00:00:01+00:00",
+            "updated_utc": "2026-07-21T00:00:02+00:00",
         },
     )
     review = _worker_closeout_review(config, current)
@@ -191,13 +236,51 @@ def test_live_closeout_fails_when_final_state_is_missing(tmp_path: Path) -> None
     write_json_atomic(
         role_root / "heartbeat.json",
         {
+            "run_id": "dual_model_b_closeout",
             "role": "model_b",
-            "pid": 555,
+            "pid": 888,
             "status": "STOPPED",
-            "updated_utc": "2026-07-21T00:00:00+00:00",
+            "started_utc": "2026-07-21T00:00:01+00:00",
+            "updated_utc": "2026-07-21T00:00:02+00:00",
         },
     )
     review = _worker_closeout_review(config, current)
     assert review["passed"] is False
     assert review["broker_flat"] is False
     assert review["virtual_flat"] is False
+
+
+def test_windows_termination_uses_taskkill_process_tree(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import capstone_trading.runtime.dual_strategy_supervisor as supervisor_module
+
+    process = FakeManagedProcess(pid=999)
+    current = WorkerProcess(
+        role="model_a",
+        process=process,  # type: ignore[arg-type]
+        log_handle=StringIO(),
+        log_path=tmp_path / "model_a.log",
+        started_utc="2026-07-21T00:00:00+00:00",
+    )
+    calls: list[list[str]] = []
+
+    class Completed:
+        returncode = 0
+        stdout = "SUCCESS"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        process.exit_code = 1
+        return Completed()
+
+    monkeypatch.setattr(supervisor_module.os, "name", "nt")
+    monkeypatch.setattr(supervisor_module.subprocess, "run", fake_run)
+
+    _terminate_worker(current, timeout_seconds=5)
+
+    assert calls == [["taskkill", "/PID", "999", "/T", "/F"]]
+    assert process.terminate_called is False
+    assert current.log_handle.closed is True

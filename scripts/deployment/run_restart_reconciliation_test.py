@@ -40,6 +40,18 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def parse_time(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def terminate_pid(pid: int) -> None:
     if os.name == "nt":
         completed = subprocess.run(
@@ -94,6 +106,15 @@ def main() -> int:
     if before_pid <= 0 or before_worker.get("running") is not True:
         raise RestartTestError("Selected worker is not running")
     before_state = load_json(state_path)
+    before_heartbeat = load_json(heartbeat_path)
+    if before_heartbeat.get("role") != args.role:
+        raise RestartTestError("Existing heartbeat role does not match selected worker")
+    if before_heartbeat.get("status") != "RUNNING":
+        raise RestartTestError("Selected worker heartbeat is not RUNNING")
+    before_runtime_pid = int(before_heartbeat.get("pid", 0) or 0)
+    before_run_id = str(before_heartbeat.get("run_id", "") or "")
+    if before_runtime_pid <= 0 or not before_run_id:
+        raise RestartTestError("Existing heartbeat is missing runtime identity")
     before_restart_count = int(before_state.get("restart_count", 0) or 0)
     before_order_send_calls = int(before_state.get("order_send_calls", 0) or 0)
     before_last_event = before_state.get("last_event_time_utc")
@@ -102,6 +123,7 @@ def main() -> int:
     deadline = time.time() + max(30, args.timeout_seconds)
     after_status: dict[str, Any] | None = None
     after_state: dict[str, Any] | None = None
+    after_heartbeat: dict[str, Any] | None = None
     while time.time() < deadline:
         time.sleep(5)
         try:
@@ -112,17 +134,45 @@ def main() -> int:
             continue
         worker = candidate_status.get("workers", {}).get(args.role, {})
         new_pid = int(worker.get("pid", 0) or 0)
+        new_runtime_pid = int(heartbeat.get("pid", 0) or 0)
+        new_run_id = str(heartbeat.get("run_id", "") or "")
+        heartbeat_started = parse_time(heartbeat.get("started_utc"))
+        worker_started = parse_time(worker.get("started_utc"))
         restarted = new_pid > 0 and new_pid != before_pid and worker.get("running") is True
         count_advanced = int(candidate_state.get("restart_count", 0) or 0) > before_restart_count
-        heartbeat_good = heartbeat.get("status") in {"STARTING", "RUNNING"}
+        heartbeat_good = (
+            heartbeat.get("role") == args.role
+            and heartbeat.get("status") in {"STARTING", "RUNNING"}
+            and new_runtime_pid > 0
+            and new_runtime_pid != before_runtime_pid
+            and bool(new_run_id)
+            and new_run_id != before_run_id
+            and heartbeat_started is not None
+            and worker_started is not None
+            and heartbeat_started >= worker_started
+        )
+        state_owned_by_runtime = int(candidate_state.get("last_worker_pid", 0) or 0) == new_runtime_pid
+        reconciliation_passed = str(
+            candidate_state.get("reconciliation_status", "")
+        ).startswith("PASS_")
         no_order_change = int(candidate_state.get("order_send_calls", 0) or 0) == before_order_send_calls
-        if restarted and count_advanced and heartbeat_good and no_order_change:
+        if (
+            restarted
+            and count_advanced
+            and heartbeat_good
+            and state_owned_by_runtime
+            and reconciliation_passed
+            and no_order_change
+        ):
             after_status = candidate_status
             after_state = candidate_state
+            after_heartbeat = heartbeat
             break
-    if after_status is None or after_state is None:
+    if after_status is None or after_state is None or after_heartbeat is None:
         raise RestartTestError("Worker did not satisfy restart checks before timeout")
     after_worker = after_status["workers"][args.role]
+    after_runtime_pid = int(after_heartbeat.get("pid", 0) or 0)
+    after_run_id = str(after_heartbeat.get("run_id", "") or "")
     report = {
         "schema_version": "1.0",
         "test": "shadow_worker_restart_and_reconciliation",
@@ -133,20 +183,29 @@ def main() -> int:
         "role": args.role,
         "orders_enabled": False,
         "before": {
-            "pid": before_pid,
+            "launcher_pid": before_pid,
+            "runtime_pid": before_runtime_pid,
+            "run_id": before_run_id,
             "restart_count": before_restart_count,
             "order_send_calls": before_order_send_calls,
             "last_event_time_utc": before_last_event,
         },
         "after": {
-            "pid": int(after_worker["pid"]),
+            "launcher_pid": int(after_worker["pid"]),
+            "runtime_pid": after_runtime_pid,
+            "run_id": after_run_id,
             "restart_count": int(after_state.get("restart_count", 0) or 0),
             "order_send_calls": int(after_state.get("order_send_calls", 0) or 0),
             "last_event_time_utc": after_state.get("last_event_time_utc"),
             "reconciliation_status": after_state.get("reconciliation_status"),
         },
         "validations": {
-            "pid_changed": int(after_worker["pid"]) != before_pid,
+            "launcher_pid_changed": int(after_worker["pid"]) != before_pid,
+            "runtime_pid_changed": after_runtime_pid != before_runtime_pid,
+            "worker_run_id_changed": after_run_id != before_run_id,
+            "state_owned_by_new_runtime_pid": int(
+                after_state.get("last_worker_pid", 0) or 0
+            ) == after_runtime_pid,
             "restart_count_increased": int(after_state.get("restart_count", 0) or 0) > before_restart_count,
             "order_send_count_unchanged": int(after_state.get("order_send_calls", 0) or 0) == before_order_send_calls,
             "supervisor_still_running": after_status.get("status") == "RUNNING",
@@ -159,8 +218,10 @@ def main() -> int:
     write_json(report_path, report)
     print("Restart reconciliation status:", report["status"])
     print("Role:", args.role)
-    print("Old PID:", before_pid)
-    print("New PID:", report["after"]["pid"])
+    print("Old launcher PID:", before_pid)
+    print("New launcher PID:", report["after"]["launcher_pid"])
+    print("Old runtime PID:", before_runtime_pid)
+    print("New runtime PID:", report["after"]["runtime_pid"])
     print("Restart count:", report["after"]["restart_count"])
     print("Order-send count unchanged:", report["validations"]["order_send_count_unchanged"])
     print("Reconciliation status:", report["after"]["reconciliation_status"])
