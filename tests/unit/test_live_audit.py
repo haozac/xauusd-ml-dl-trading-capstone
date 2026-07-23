@@ -198,7 +198,10 @@ def test_telemetry_row_uses_broker_position_and_observed_spread() -> None:
 def test_decision_row_preserves_risk_price_and_rule_context() -> None:
     from types import SimpleNamespace
 
-    from capstone_trading.runtime.dual_live_state import BrokerSnapshot
+    from capstone_trading.runtime.dual_live_state import (
+        BrokerSnapshot,
+        DualLiveState,
+    )
     from capstone_trading.runtime.live_audit import (
         DECISION_FIELDS,
         decision_audit_row,
@@ -231,14 +234,16 @@ def test_decision_row_preserves_risk_price_and_rule_context() -> None:
         forbidden_attempts=(),
         shutdown_called=True,
     )
-    state_before = SimpleNamespace(
+    state_before = DualLiveState(
+        role="model_a",
+        execution_mode="live",
         policy_changes_today=3,
         successful_entries_today=2,
         hold_bars=4,
         flat_bars_since_exit=0,
         current_utc_date="2026-07-24",
         day_start_equity=10000.0,
-        peak_equity=10020.0,
+        running_peak_equity=10020.0,
         daily_return=-0.001,
         total_drawdown=-0.002,
         daily_stop_active=False,
@@ -247,7 +252,7 @@ def test_decision_row_preserves_risk_price_and_rule_context() -> None:
         reconciliation_status="PASS_STATE_MATCHES_BROKER",
         reconciliation_incidents=0,
     )
-    state_after = SimpleNamespace(
+    state_after = DualLiveState(
         **{
             **state_before.__dict__,
             "policy_changes_today": 4,
@@ -316,10 +321,33 @@ def test_decision_row_preserves_risk_price_and_rule_context() -> None:
     assert row["m15_close"] == 2400.0
     assert row["spread_points_at_decision"] == pytest.approx(20.0)
     assert row["policy_changes_today_after"] == 4
+    assert row["peak_equity_before"] == 10020.0
+    assert row["peak_equity_after"] == 10020.0
     assert row["daily_return_before"] == -0.001
     assert row["daily_return_after"] == -0.0015
     assert row["strategy_rules_json"]["max_policy_changes_per_utc_day"] == 3
     assert row["broker_before_json"]["snapshot"]["symbol"] == "XAUUSD"
+
+def test_live_audit_state_attribute_contract_matches_dual_live_state() -> None:
+    import ast
+    import inspect
+    from dataclasses import fields
+
+    from capstone_trading.runtime.dual_live_state import DualLiveState
+    from capstone_trading.runtime import live_audit
+
+    state_fields = {field.name for field in fields(DualLiveState)}
+    tree = ast.parse(inspect.getsource(live_audit))
+    state_references = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"state", "state_before", "state_after"}
+    }
+
+    assert state_references <= state_fields
+
 
 def test_runtime_event_row_uses_persisted_broker_position() -> None:
     from types import SimpleNamespace
