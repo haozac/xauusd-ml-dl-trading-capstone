@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from capstone_trading.runtime.dual_live_execution import (
     DualLiveExecutionError,
     EntrySpreadBlocked,
+    collect_broker_history,
     execute_transition,
     inspect_broker,
 )
@@ -40,6 +43,8 @@ class FakeMt5:
         self.pending: list[dict] = []
         self.next_ticket = 100
         self.shutdown_count = 0
+        self.history_deals: list[dict] = []
+        self.history_orders: list[dict] = []
 
     def initialize(self, *args, **kwargs):
         return True
@@ -85,6 +90,7 @@ class FakeMt5:
             "filling_mode": self.SYMBOL_FILLING_IOC,
             "trade_exemode": self.SYMBOL_TRADE_EXECUTION_MARKET,
             "trade_contract_size": 100.0,
+            "point": 0.05,
             "ask": 4000.0,
             "bid": 3999.5,
         }
@@ -103,6 +109,12 @@ class FakeMt5:
 
     def orders_total(self):
         return len(self.pending)
+
+    def history_deals_get(self, date_from, date_to):
+        return tuple(item.copy() for item in self.history_deals)
+
+    def history_orders_get(self, date_from, date_to):
+        return tuple(item.copy() for item in self.history_orders)
 
     def order_calc_margin(self, *args, **kwargs):
         return 100.0
@@ -123,9 +135,22 @@ class FakeMt5:
             request = args[0]
         request = dict(request)
         self.next_ticket += 1
-        if request.get("position"):
+        position_id = self.next_ticket + 1000
+        is_close = bool(request.get("position"))
+        if is_close:
+            existing = next(
+                (
+                    item
+                    for item in self.positions
+                    if int(item["ticket"]) == int(request["position"])
+                ),
+                None,
+            )
+            if existing is not None:
+                position_id = int(existing["identifier"])
             self.positions = [
-                item for item in self.positions
+                item
+                for item in self.positions
                 if int(item["ticket"]) != int(request["position"])
             ]
         else:
@@ -140,18 +165,75 @@ class FakeMt5:
                     "type": position_type,
                     "volume": float(request["volume"]),
                     "ticket": self.next_ticket,
-                    "identifier": self.next_ticket + 1000,
+                    "identifier": position_id,
                     "order": self.next_ticket,
                     "magic": int(request["magic"]),
+                    "price_open": float(request["price"]),
+                    "price_current": float(request["price"]),
+                    "profit": 0.0,
+                    "swap": 0.0,
                 }
             ]
+        event_time = datetime(2026, 7, 24, 0, 0, tzinfo=timezone.utc)
+        event_seconds = int(event_time.timestamp())
+        event_milliseconds = event_seconds * 1000
+        deal_ticket = self.next_ticket + 5000
+        self.history_orders.append(
+            {
+                "ticket": self.next_ticket,
+                "position_id": position_id,
+                "position_by_id": 0,
+                "time_setup": event_seconds,
+                "time_setup_msc": event_milliseconds,
+                "time_done": event_seconds,
+                "time_done_msc": event_milliseconds,
+                "symbol": request["symbol"],
+                "type": int(request["type"]),
+                "state": 4,
+                "reason": 0,
+                "magic": int(request["magic"]),
+                "volume_initial": float(request["volume"]),
+                "volume_current": 0.0,
+                "price_open": float(request["price"]),
+                "price_current": float(request["price"]),
+                "price_stoplimit": 0.0,
+                "sl": 0.0,
+                "tp": 0.0,
+                "comment": request["comment"],
+                "external_id": "",
+            }
+        )
+        self.history_deals.append(
+            {
+                "ticket": deal_ticket,
+                "order": self.next_ticket,
+                "position_id": position_id,
+                "time": event_seconds,
+                "time_msc": event_milliseconds,
+                "symbol": request["symbol"],
+                "type": int(request["type"]),
+                "entry": 1 if is_close else 0,
+                "reason": 0,
+                "magic": int(request["magic"]),
+                "volume": float(request["volume"]),
+                "price": float(request["price"]),
+                "commission": -0.1,
+                "swap": 0.0,
+                "profit": -1.0 if is_close else 0.0,
+                "fee": 0.0,
+                "comment": request["comment"],
+                "external_id": "",
+            }
+        )
         return {
             "retcode": self.TRADE_RETCODE_DONE,
             "comment": "Done",
             "order": self.next_ticket,
-            "deal": self.next_ticket + 5000,
+            "deal": deal_ticket,
+            "price": float(request["price"]),
             "request": request,
         }
+
 
 
 def controls() -> FrozenBrokerControls:
@@ -345,3 +427,107 @@ def test_reversal_spread_jump_after_close_returns_explicit_flat_partial() -> Non
     assert partial.broker_position_after == 0
     assert [leg.purpose for leg in partial.legs] == ["CLOSE_LONG"]
     assert fake.positions == []
+
+
+def test_execution_leg_persists_price_and_ticket_audit_fields() -> None:
+    fake = FakeMt5(login=1234309, spread=12)
+    result = execute_transition(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        target_position=1,
+        event_time_utc="2026-07-21T15:45:00+00:00",
+    )
+    leg = result.legs[0]
+    assert leg.requested_price == 4000.0
+    assert leg.bid_before == 3999.5
+    assert leg.ask_before == 4000.0
+    assert leg.spread_points_before == 10
+    assert leg.symbol_reported_spread_points_before == 12
+    assert leg.order_ticket is not None
+    assert leg.deal_ticket is not None
+
+
+def test_collect_broker_history_excludes_previous_rehearsal_rows() -> None:
+    fake = FakeMt5(login=1234309)
+    old_seconds = int(datetime(2026, 7, 23, tzinfo=timezone.utc).timestamp())
+    fake.history_deals.append(
+        {
+            "ticket": 1,
+            "order": 1,
+            "position_id": 1,
+            "time": old_seconds,
+            "time_msc": old_seconds * 1000,
+            "symbol": "XAUUSD",
+            "magic": 26070101,
+            "comment": "CP_DUAL_A_OLD",
+        }
+    )
+    execute_transition(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        target_position=1,
+        event_time_utc="2026-07-24T00:00:00+00:00",
+    )
+    audit = collect_broker_history(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        started_utc=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+    assert {int(row["ticket"]) for row in audit.deals} == {5101}
+    assert {int(row["ticket"]) for row in audit.orders} == {101}
+
+
+def test_collect_broker_history_keeps_linked_blank_symbol_fee_deal() -> None:
+    fake = FakeMt5(login=1234309)
+    execute_transition(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        target_position=1,
+        event_time_utc="2026-07-24T00:00:00+00:00",
+    )
+    trade_deal = fake.history_deals[-1]
+    fake.history_deals.append(
+        {
+            "ticket": 9999,
+            "order": trade_deal["order"],
+            "position_id": trade_deal["position_id"],
+            "time": trade_deal["time"],
+            "time_msc": trade_deal["time_msc"],
+            "symbol": "",
+            "type": 2,
+            "entry": 1,
+            "reason": 0,
+            "magic": 0,
+            "volume": 0.0,
+            "price": 0.0,
+            "commission": -0.25,
+            "swap": 0.0,
+            "profit": 0.0,
+            "fee": 0.0,
+            "comment": "",
+            "external_id": "",
+        }
+    )
+
+    audit = collect_broker_history(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        started_utc=datetime(2026, 7, 24, tzinfo=timezone.utc),
+    )
+
+    assert {int(row["ticket"]) for row in audit.deals} == {5101, 9999}

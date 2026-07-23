@@ -16,6 +16,7 @@ import pandas as pd
 
 from capstone_trading.data.canonical_bars import M15_DELTA
 from capstone_trading.errors import TradingReplayError
+from capstone_trading.policy.position_transition import resolve_position_transition
 
 DEFAULT_COSTS_BPS: tuple[float, ...] = (0.0, 0.5, 1.0)
 POSITION_VALUES: tuple[int, ...] = (-1, 0, 1)
@@ -32,6 +33,7 @@ class ModelAOverlayRules:
     count_gap_exits_against_cap: bool = False
     count_risk_exits_against_cap: bool = False
     reversal_policy_event_units: int = 1
+    allow_risk_reducing_exit_when_capped: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,9 @@ def overlay_rules_from_config(config_raw: Mapping[str, Any]) -> ModelAOverlayRul
                 overlay.get("risk_exits_count_against_daily_change_cap", False)
             ),
             reversal_policy_event_units=int(overlay.get("reversal_policy_event_units", 1)),
+            allow_risk_reducing_exit_when_capped=bool(
+                overlay.get("allow_risk_reducing_exit_when_capped", False)
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise TradingReplayError(f"Missing frozen overlay/risk field: {exc}") from exc
@@ -150,13 +155,6 @@ def _signal_from_probability(probability: float, rules: ModelAOverlayRules) -> i
         return -1
     return 0
 
-
-def _policy_event_units(previous_position: int, next_position: int, rules: ModelAOverlayRules) -> int:
-    if previous_position == next_position:
-        return 0
-    if previous_position != 0 and next_position != 0 and previous_position != next_position:
-        return rules.reversal_policy_event_units
-    return 1
 
 
 def _position_change_reason(
@@ -289,18 +287,30 @@ def replay_model_a(
                     next_position = previous_position
                     blocked_reason = "minimum_hold_active"
                 else:
-                    candidate_policy_units = _policy_event_units(
-                        previous_position,
-                        desired_position,
-                        rules,
+                    resolution = resolve_position_transition(
+                        current_position=previous_position,
+                        desired_position=desired_position,
+                        policy_changes_today=policy_changes_today,
+                        max_policy_changes_per_day=rules.max_policy_changes_per_day,
+                        reversal_policy_event_units=(
+                            rules.reversal_policy_event_units
+                        ),
+                        allow_risk_reducing_exit_when_capped=(
+                            rules.allow_risk_reducing_exit_when_capped
+                        ),
                     )
-                    if policy_changes_today + candidate_policy_units <= rules.max_policy_changes_per_day:
-                        next_position = desired_position
-                        policy_event_units = candidate_policy_units
-                        policy_changes_today += candidate_policy_units
-                        policy_change_events += candidate_policy_units
+                    next_position = int(resolution.effective_target_position)
+                    policy_event_units = int(resolution.consumed_policy_units)
+                    if next_position != previous_position:
+                        policy_changes_today += policy_event_units
+                        policy_change_events += policy_event_units
+                        if resolution.close_only_reversal:
+                            blocked_reason = (
+                                "daily_change_cap_close_only_reversal"
+                            )
+                        elif resolution.cap_reached and resolution.exit_allowed:
+                            blocked_reason = "daily_change_cap_exit_allowed"
                     else:
-                        next_position = previous_position
                         blocked_reason = "daily_change_cap_active"
             else:
                 next_position = previous_position

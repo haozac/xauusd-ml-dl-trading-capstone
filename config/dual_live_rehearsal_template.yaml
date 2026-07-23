@@ -10,6 +10,7 @@ runtime:
   orders_enabled: false
   duration_hours: 24
   poll_seconds: 30
+  history_refresh_seconds: 300
   max_iterations: 0
   flatten_on_clean_stop: true
   allow_onednn: false

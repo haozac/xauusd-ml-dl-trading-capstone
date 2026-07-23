@@ -18,8 +18,9 @@ a trade should occur.  It receives an already-audited target position and then:
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
+import json
 import math
 
 from capstone_trading.runtime.dual_live_state import (
@@ -35,6 +36,7 @@ from capstone_trading.runtime.order_execution_probe import (
     build_send_event,
     call_order_send_compat,
     get_orders_for_symbol,
+    object_list_to_plain,
     get_positions_for_symbol,
     run_order_check_for_request,
     wait_for_no_position,
@@ -74,6 +76,8 @@ class BrokerInspection:
     account: Mapping[str, Any]
     symbol_info: Mapping[str, Any]
     tick: Mapping[str, Any]
+    positions_raw: tuple[Mapping[str, Any], ...]
+    pending_orders_raw: tuple[Mapping[str, Any], ...]
     capital_review: Mapping[str, Any]
     mt5_calls: tuple[str, ...]
     forbidden_attempts: tuple[str, ...]
@@ -92,6 +96,18 @@ class ExecutionLeg:
     order_event: Mapping[str, Any]
     position_ticket: int | None
     completed_utc: str
+    requested_price: float | None = None
+    broker_result_price: float | None = None
+    bid_before: float | None = None
+    ask_before: float | None = None
+    spread_points_before: float | None = None
+    symbol_reported_spread_points_before: int | None = None
+    symbol_point: float | None = None
+    slippage_points_signed: float | None = None
+    slippage_points_adverse: float | None = None
+    order_ticket: int | None = None
+    deal_ticket: int | None = None
+    request_position_ticket: int | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +128,19 @@ class TransitionExecution:
     shutdown_called: bool
     mt5_calls: tuple[str, ...]
     forbidden_attempts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BrokerHistoryAudit:
+    role: str
+    account_login_masked: str
+    started_utc: str
+    captured_utc: str
+    deals: tuple[Mapping[str, Any], ...]
+    orders: tuple[Mapping[str, Any], ...]
+    mt5_calls: tuple[str, ...]
+    forbidden_attempts: tuple[str, ...]
+    shutdown_called: bool
 
 
 def _package_snapshot(mt5: Any) -> dict[str, Any]:
@@ -313,6 +342,8 @@ def inspect_broker(
             account=account,
             symbol_info=symbol_info,
             tick=tick,
+            positions_raw=tuple(dict(item) for item in positions),
+            pending_orders_raw=tuple(dict(item) for item in pending_orders),
             capital_review=capital,
             mt5_calls=tuple(proxy.calls),
             forbidden_attempts=tuple(proxy.forbidden_attempts),
@@ -372,13 +403,15 @@ def _execute_leg(
     poll_seconds: float,
 ) -> tuple[ExecutionLeg, list[dict[str, Any]]]:
     symbol_info = _symbol_snapshot(proxy, controls)
-    spread = _int_or_none(symbol_info.get("spread"))
+    reported_spread = _int_or_none(symbol_info.get("spread"))
     if enforce_entry_spread and (
-        spread is None
-        or spread < 0
-        or spread > int(controls.max_spread_points_for_entry)
+        reported_spread is None
+        or reported_spread < 0
+        or reported_spread > int(controls.max_spread_points_for_entry)
     ):
-        raise EntrySpreadBlocked(spread, controls.max_spread_points_for_entry)
+        raise EntrySpreadBlocked(
+            reported_spread, controls.max_spread_points_for_entry
+        )
     tick = inspect_tick_for_order_check(proxy, controls.symbol)
     filling_name, filling_value = choose_filling_candidates(proxy, symbol_info)[0]
     expected_magic = _magic_for_role(controls, role)
@@ -458,6 +491,34 @@ def _execute_leg(
             poll_seconds=poll_seconds,
         )
         ticket = None
+    requested_price = _float_or_none(request.get("price"))
+    send_result = event.send_result or {}
+    broker_result_price = _float_or_none(send_result.get("price"))
+    if broker_result_price is not None and broker_result_price <= 0.0:
+        broker_result_price = None
+    point = _float_or_none(symbol_info.get("point"))
+    bid_before = _float_or_none(tick.get("bid"))
+    ask_before = _float_or_none(tick.get("ask"))
+    observed_spread_points = None
+    if (
+        bid_before is not None
+        and ask_before is not None
+        and point is not None
+        and point > 0.0
+    ):
+        observed_spread_points = (ask_before - bid_before) / point
+    slippage_signed = None
+    slippage_adverse = None
+    if (
+        requested_price is not None
+        and broker_result_price is not None
+        and point is not None
+        and point > 0.0
+    ):
+        slippage_signed = (broker_result_price - requested_price) / point
+        slippage_adverse = (
+            slippage_signed if side.upper() == "BUY" else -slippage_signed
+        )
     leg = ExecutionLeg(
         purpose=purpose,
         side=side.upper(),
@@ -469,6 +530,18 @@ def _execute_leg(
         order_event=asdict(event),
         position_ticket=ticket,
         completed_utc=datetime.now(timezone.utc).isoformat(),
+        requested_price=requested_price,
+        broker_result_price=broker_result_price,
+        bid_before=bid_before,
+        ask_before=ask_before,
+        spread_points_before=observed_spread_points,
+        symbol_reported_spread_points_before=reported_spread,
+        symbol_point=point,
+        slippage_points_signed=slippage_signed,
+        slippage_points_adverse=slippage_adverse,
+        order_ticket=_int_or_none(send_result.get("order")),
+        deal_ticket=_int_or_none(send_result.get("deal")),
+        request_position_ticket=_int_or_none(request.get("position")),
     )
     return leg, post_positions
 
@@ -708,6 +781,210 @@ def execute_transition(
             shutdown_called=True,
             mt5_calls=tuple(proxy.calls),
             forbidden_attempts=tuple(proxy.forbidden_attempts),
+        )
+    finally:
+        if initialized:
+            try:
+                proxy.shutdown()
+                shutdown_called = True
+            except Exception:
+                shutdown_called = False
+        if initialized and not shutdown_called:
+            raise DualLiveExecutionError(
+                f"MT5 shutdown was not confirmed for {terminal_path}"
+            )
+
+
+def _dedupe_plain_rows(rows: list[dict[str, Any]]) -> tuple[Mapping[str, Any], ...]:
+    seen: set[str] = set()
+    output: list[Mapping[str, Any]] = []
+
+    for row in rows:
+        key = json.dumps(row, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(dict(row))
+    return tuple(output)
+
+
+def _history_row_time_utc(
+    row: Mapping[str, Any],
+    *,
+    kind: str,
+) -> datetime | None:
+    if kind == "deal":
+        milliseconds = row.get("time_msc")
+        seconds = row.get("time")
+    elif kind == "order":
+        milliseconds = row.get("time_done_msc") or row.get("time_setup_msc")
+        seconds = row.get("time_done") or row.get("time_setup")
+    else:
+        raise DualLiveExecutionError(f"Unsupported history kind: {kind!r}")
+    try:
+        if milliseconds not in (None, "", 0, "0"):
+            return datetime.fromtimestamp(
+                float(milliseconds) / 1000.0,
+                tz=timezone.utc,
+            )
+        if seconds not in (None, "", 0, "0"):
+            return datetime.fromtimestamp(float(seconds), tz=timezone.utc)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+    return None
+
+
+def _history_rows_for_role(
+    rows: list[dict[str, Any]],
+    *,
+    controls: FrozenBrokerControls,
+    role: str,
+    kind: str,
+    observation_started_utc: datetime,
+    known_order_tickets: set[int] | None = None,
+    known_position_ids: set[int] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filter broker history to this role and observation session.
+
+    Some MT5 brokers emit commission or fee deals with a blank symbol.  Those
+    rows are retained when they link to a role-owned order or position, so the
+    offline PnL ledger is complete without admitting unrelated account history.
+    """
+
+    expected_magic = _magic_for_role(controls, role)
+    prefix = _comment_prefix(role)
+    lower_bound = observation_started_utc.astimezone(timezone.utc) - timedelta(
+        seconds=1
+    )
+    linked_orders = set(known_order_tickets or ())
+    linked_positions = set(known_position_ids or ())
+    expected_symbol = str(controls.symbol).upper()
+    matched: list[dict[str, Any]] = []
+    for row in rows:
+        symbol = str(row.get("symbol", "") or "").upper()
+        magic = _int_or_none(row.get("magic"))
+        comment = str(row.get("comment", "") or "")
+        row_time = _history_row_time_utc(row, kind=kind)
+        order_ticket = _int_or_none(row.get("order")) or _int_or_none(
+            row.get("ticket") if kind == "order" else None
+        )
+        position_id = _int_or_none(row.get("position_id")) or _int_or_none(
+            row.get("position")
+        )
+        if row_time is None or row_time < lower_bound:
+            continue
+        role_marker = magic == expected_magic or comment.startswith(prefix)
+        linked_to_role = (
+            order_ticket in linked_orders
+            or position_id in linked_positions
+        )
+        if kind == "order":
+            include = symbol == expected_symbol and role_marker
+        else:
+            include = (symbol == expected_symbol and role_marker) or linked_to_role
+            if role_marker and symbol in {"", expected_symbol}:
+                include = True
+        if include:
+            matched.append(dict(row))
+    return _dedupe_plain_rows(matched)
+
+
+def _required_history_call(
+    proxy: GuardedMt5TinyOrderProxy,
+    method_name: str,
+    *args: Any,
+) -> list[dict[str, Any]]:
+    method = getattr(proxy, method_name)
+    result = method(*args)
+    if result is None:
+        raise DualLiveExecutionError(
+            f"{method_name} returned None: {safe_last_error(proxy)}"
+        )
+    return object_list_to_plain(result)
+
+
+def collect_broker_history(
+    *,
+    mt5_module: Any,
+    terminal_path: str,
+    controls: FrozenBrokerControls,
+    role: str,
+    expected_login_suffix: str,
+    started_utc: datetime,
+) -> BrokerHistoryAudit:
+    """Read all role-owned broker deals and orders for the current run window."""
+
+    proxy = GuardedMt5TinyOrderProxy(mt5_module, controls)
+    initialized = False
+    shutdown_called = False
+    captured = datetime.now(timezone.utc)
+    try:
+        initialise_terminal(proxy, terminal_path)
+        initialized = True
+        account = inspect_account_for_trading(proxy, controls)
+        login_masked = str(account.get("login_masked") or "")
+        if not login_masked.endswith(str(expected_login_suffix)):
+            raise DualLiveExecutionError(
+                f"Account mismatch for {terminal_path}. Expected suffix "
+                f"{expected_login_suffix}, found {login_masked}"
+            )
+        observation_started = started_utc.astimezone(timezone.utc)
+        # A wide broker query is retained because some MT5 builds return empty
+        # results for narrow windows.  Rows are then filtered back to the exact
+        # observation session so an earlier rehearsal cannot contaminate the
+        # current run.
+        date_from = observation_started - timedelta(days=2)
+        date_to = captured + timedelta(days=2)
+        deal_rows = _required_history_call(
+            proxy,
+            "history_deals_get",
+            date_from,
+            date_to,
+        )
+        order_rows = _required_history_call(
+            proxy,
+            "history_orders_get",
+            date_from,
+            date_to,
+        )
+        orders = _history_rows_for_role(
+            order_rows,
+            controls=controls,
+            role=role,
+            kind="order",
+            observation_started_utc=observation_started,
+        )
+        known_order_tickets = {
+            ticket
+            for row in orders
+            if (ticket := _int_or_none(row.get("ticket") or row.get("order")))
+            is not None
+        }
+        known_position_ids = {
+            position_id
+            for row in orders
+            if (position_id := _int_or_none(row.get("position_id")))
+            is not None
+        }
+        deals = _history_rows_for_role(
+            deal_rows,
+            controls=controls,
+            role=role,
+            kind="deal",
+            observation_started_utc=observation_started,
+            known_order_tickets=known_order_tickets,
+            known_position_ids=known_position_ids,
+        )
+        return BrokerHistoryAudit(
+            role=role,
+            account_login_masked=login_masked,
+            started_utc=started_utc.astimezone(timezone.utc).isoformat(),
+            captured_utc=captured.isoformat(),
+            deals=deals,
+            orders=orders,
+            mt5_calls=tuple(proxy.calls),
+            forbidden_attempts=tuple(proxy.forbidden_attempts),
+            shutdown_called=True,
         )
     finally:
         if initialized:

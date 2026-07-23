@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from types import SimpleNamespace
+import json
 import os
 import time
 import traceback
@@ -38,6 +40,7 @@ from capstone_trading.model_loader import (
 )
 from capstone_trading.runtime.dual_live_execution import (
     EntrySpreadBlocked,
+    collect_broker_history,
     execute_transition,
     flatten_position,
     inspect_broker,
@@ -48,7 +51,6 @@ from capstone_trading.runtime.dual_live_state import (
     StrategyDecision,
     StrategyRules,
     advance_blocked_or_hold_state,
-    append_csv_atomic_row,
     apply_transition,
     decide_strategy_transition,
     decision_to_mapping,
@@ -61,6 +63,24 @@ from capstone_trading.runtime.dual_live_state import (
     utc_now_iso,
     write_json_atomic,
     write_state,
+)
+from capstone_trading.runtime.live_audit import (
+    BROKER_DEAL_FIELDS,
+    BROKER_ORDER_FIELDS,
+    DECISION_FIELDS,
+    ORDER_EVENT_FIELDS,
+    RUNTIME_EVENT_FIELDS,
+    TELEMETRY_FIELDS,
+    append_csv_row,
+    append_unique_rows,
+    broker_deal_row,
+    broker_order_row,
+    completed_bar_context,
+    decision_audit_row,
+    execution_audit_rows,
+    runtime_event_audit_row,
+    spread_points_from_tick,
+    telemetry_audit_row,
 )
 from capstone_trading.runtime.mt5_readiness import (
     SafeMt5Proxy,
@@ -92,6 +112,12 @@ class WorkerPaths:
     state: Path
     heartbeat: Path
     decisions_csv: Path
+    telemetry_csv: Path
+    order_events_csv: Path
+    broker_deals_csv: Path
+    broker_orders_csv: Path
+    runtime_events_csv: Path
+    audit_session: Path
     latest_decision: Path
     latest_shadow_snapshot: Path
     final_report: Path
@@ -111,6 +137,7 @@ class WorkerSettings:
     orders_enabled: bool
     poll_seconds: int
     max_iterations: int
+    history_refresh_seconds: int
     model_a_config: Path
     model_b_config: Path
     freeze_manifest: Path
@@ -186,6 +213,12 @@ def load_worker_settings(
         state=role_root / "state.json",
         heartbeat=role_root / "heartbeat.json",
         decisions_csv=role_root / "decisions.csv",
+        telemetry_csv=role_root / "telemetry.csv",
+        order_events_csv=role_root / "order_events.csv",
+        broker_deals_csv=role_root / "broker_deals.csv",
+        broker_orders_csv=role_root / "broker_orders.csv",
+        runtime_events_csv=role_root / "runtime_events.csv",
+        audit_session=role_root / "audit_session.json",
         latest_decision=role_root / "latest_decision.json",
         latest_shadow_snapshot=role_root / "latest_shadow_snapshot.json",
         final_report=role_root / "final_report.json",
@@ -203,6 +236,9 @@ def load_worker_settings(
         orders_enabled=orders_enabled,
         poll_seconds=max(5, int(runtime.get("poll_seconds", 30))),
         max_iterations=max(0, int(runtime.get("max_iterations", 0))),
+        history_refresh_seconds=max(
+            60, int(runtime.get("history_refresh_seconds", 300))
+        ),
         model_a_config=Path(str(paths.get("model_a_config", "config/model_a_frozen.yaml"))),
         model_b_config=Path(str(paths.get("model_b_config", "config/model_b_v2_frozen.yaml"))),
         freeze_manifest=Path(str(paths.get("freeze_manifest", "config/stage0_freeze_manifest.json"))),
@@ -291,6 +327,7 @@ def _rules_from_configs(config_a: Any, config_b_raw: Mapping[str, Any], role: st
             max_successful_entries_per_utc_day=None,
             long_only=False,
             reversal_policy_event_units=int(rules_a.reversal_policy_event_units),
+            allow_risk_reducing_exit_when_capped=True,
         )
     else:
         strategy = StrategyRules(
@@ -308,6 +345,241 @@ def _rules_from_configs(config_a: Any, config_b_raw: Mapping[str, Any], role: st
     strategy.validate()
     risk.validate()
     return strategy, risk, rules_a, rules_b
+
+
+def _load_or_create_observation_start(
+    settings: WorkerSettings,
+    *,
+    run_id: str,
+    worker_started_utc: str,
+) -> datetime:
+    path = settings.paths.audit_session
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(payload, Mapping):
+                raise TypeError("audit session JSON must contain an object")
+            role = str(payload.get("role", ""))
+            execution_mode = str(payload.get("execution_mode", ""))
+            started_raw = str(payload.get("observation_started_utc", ""))
+            started = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+        except Exception as exc:
+            raise DualLiveWorkerError(
+                f"Invalid existing audit session file {path}: {exc}"
+            ) from exc
+        if role != settings.role or execution_mode != settings.execution_mode:
+            raise DualLiveWorkerError(
+                "Audit session role/execution mode does not match worker settings"
+            )
+        if started.tzinfo is None:
+            raise DualLiveWorkerError(
+                "Audit session observation_started_utc must be timezone-aware"
+            )
+        return started.astimezone(timezone.utc)
+
+    started = datetime.fromisoformat(
+        worker_started_utc.replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
+    write_json_atomic(
+        path,
+        {
+            "schema_version": "1.0",
+            "role": settings.role,
+            "execution_mode": settings.execution_mode,
+            "observation_started_utc": started.isoformat(),
+            "created_by_run_id": run_id,
+            "created_by_worker_pid": os.getpid(),
+        },
+    )
+    return started
+
+
+def _write_telemetry(
+    settings: WorkerSettings,
+    *,
+    run_id: str,
+    iteration: int,
+    snapshot_phase: str,
+    state: DualLiveState,
+    broker_inspection: Any,
+    latest_completed_event_time_utc: str | None,
+    latest_decision: Any,
+) -> None:
+    append_csv_row(
+        settings.paths.telemetry_csv,
+        telemetry_audit_row(
+            role=settings.role,
+            run_id=run_id,
+            iteration=iteration,
+            worker_pid=os.getpid(),
+            snapshot_phase=snapshot_phase,
+            execution_mode=settings.execution_mode,
+            orders_enabled=settings.orders_enabled,
+            latest_completed_event_time_utc=latest_completed_event_time_utc,
+            latest_decision=latest_decision,
+            state=state,
+            broker_inspection=broker_inspection,
+            stop_file_exists=settings.paths.stop_file.exists(),
+            kill_switch_file_exists=settings.paths.kill_switch_file.exists(),
+        ),
+        fieldnames=TELEMETRY_FIELDS,
+    )
+
+
+def _write_runtime_event(
+    settings: WorkerSettings,
+    *,
+    run_id: str,
+    iteration: int,
+    event_type: str,
+    event_reason: str,
+    severity: str,
+    state: DualLiveState,
+    event_time_utc: str | None = None,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    append_csv_row(
+        settings.paths.runtime_events_csv,
+        runtime_event_audit_row(
+            role=settings.role,
+            run_id=run_id,
+            iteration=iteration,
+            worker_pid=os.getpid(),
+            event_type=event_type,
+            event_reason=event_reason,
+            severity=severity,
+            state=state,
+            event_time_utc=event_time_utc,
+            details=details,
+        ),
+        fieldnames=RUNTIME_EVENT_FIELDS,
+    )
+
+
+def _refresh_broker_history(
+    settings: WorkerSettings,
+    *,
+    mt5_module: Any,
+    controls: Any,
+    run_id: str,
+    observation_started_at: datetime,
+    expected_order_tickets: set[int] | None = None,
+    expected_deal_tickets: set[int] | None = None,
+    retries: int = 1,
+    retry_sleep_seconds: float = 0.5,
+) -> tuple[int, int]:
+    expected_orders = set(expected_order_tickets or ())
+    expected_deals = set(expected_deal_tickets or ())
+    attempts = max(1, int(retries))
+    total_deals_added = 0
+    total_orders_added = 0
+    last_found_orders: set[int] = set()
+    last_found_deals: set[int] = set()
+
+    for attempt in range(1, attempts + 1):
+        audit = collect_broker_history(
+            mt5_module=mt5_module,
+            terminal_path=settings.terminal_path,
+            controls=controls,
+            role=settings.role,
+            expected_login_suffix=settings.expected_login_suffix,
+            started_utc=observation_started_at,
+        )
+        deal_rows = [
+            broker_deal_row(
+                row=row,
+                role=settings.role,
+                run_id=run_id,
+                captured_utc=audit.captured_utc,
+            )
+            for row in audit.deals
+        ]
+        order_rows = [
+            broker_order_row(
+                row=row,
+                role=settings.role,
+                run_id=run_id,
+                captured_utc=audit.captured_utc,
+            )
+            for row in audit.orders
+        ]
+        total_deals_added += append_unique_rows(
+            settings.paths.broker_deals_csv,
+            deal_rows,
+            fieldnames=BROKER_DEAL_FIELDS,
+            key_field="history_key",
+        )
+        total_orders_added += append_unique_rows(
+            settings.paths.broker_orders_csv,
+            order_rows,
+            fieldnames=BROKER_ORDER_FIELDS,
+            key_field="history_key",
+        )
+        last_found_deals = {
+            int(row["ticket"])
+            for row in deal_rows
+            if row.get("ticket") not in (None, "")
+        }
+        last_found_orders = {
+            int(row["ticket"])
+            for row in order_rows
+            if row.get("ticket") not in (None, "")
+        }
+        if expected_deals.issubset(last_found_deals) and expected_orders.issubset(
+            last_found_orders
+        ):
+            return total_deals_added, total_orders_added
+        if attempt < attempts:
+            time.sleep(max(0.0, float(retry_sleep_seconds)))
+
+    missing_deals = sorted(expected_deals - last_found_deals)
+    missing_orders = sorted(expected_orders - last_found_orders)
+    raise DualLiveWorkerError(
+        "Broker history did not expose all expected tickets after "
+        f"{attempts} attempts; missing_deals={missing_deals}, "
+        f"missing_orders={missing_orders}"
+    )
+
+
+def _execution_ticket_sets(execution: Any) -> tuple[set[int], set[int]]:
+    order_tickets = {
+        int(leg.order_ticket)
+        for leg in execution.legs
+        if leg.order_ticket not in (None, 0)
+    }
+    deal_tickets = {
+        int(leg.deal_ticket)
+        for leg in execution.legs
+        if leg.deal_ticket not in (None, 0)
+    }
+    return order_tickets, deal_tickets
+
+
+def _print_poll_status(
+    settings: WorkerSettings,
+    *,
+    iteration: int,
+    state: DualLiveState,
+    decision: StrategyDecision,
+    broker_inspection: Any,
+) -> None:
+    print(
+        " | ".join(
+            (
+                utc_now_iso(),
+                f"role={settings.role}",
+                f"iteration={iteration}",
+                f"event={decision.event_time_utc}",
+                f"action={decision.action}",
+                f"position={state.virtual_position}",
+                f"broker_position={state.broker_position}",
+                f"equity={broker_inspection.account.get('equity')}",
+                f"spread={spread_points_from_tick(broker_inspection.tick, broker_inspection.symbol_info)}",
+                f"reconciliation={state.reconciliation_status}",
+            )
+        ),
+        flush=True,
+    )
 
 
 def _heartbeat(
@@ -367,6 +639,10 @@ def _report(
             "model_b_short_prohibited": settings.role == "model_b",
             "account_suffix_checked_every_iteration": True,
             "broker_reconciliation_before_decision": True,
+            "telemetry_append_only_every_poll": True,
+            "completed_m15_decision_audit": True,
+            "order_and_broker_history_audit": True,
+            "performance_metrics_calculated_offline": True,
         },
     }
 
@@ -380,6 +656,11 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
     )
     started_utc = utc_now_iso()
     settings.paths.role_root.mkdir(parents=True, exist_ok=True)
+    observation_started_at = _load_or_create_observation_start(
+        settings,
+        run_id=run_id,
+        worker_started_utc=started_utc,
+    )
     state = load_state(
         settings.paths.state,
         role=settings.role,
@@ -398,6 +679,15 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
         last_decision=None,
     )
     try:
+        _write_runtime_event(
+            settings,
+            run_id=run_id,
+            iteration=0,
+            event_type="WORKER_STARTED",
+            event_reason="worker_process_started",
+            severity="INFO",
+            state=state,
+        )
         config_a_path = safe_repository_path(
             settings.repo_root,
             settings.model_a_config,
@@ -453,6 +743,23 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             mt5=replace(runtime_config.mt5, terminal_path=settings.terminal_path),
         )
         mt5_module = import_metatrader5_module()
+        startup_broker = inspect_broker(
+            mt5_module=mt5_module,
+            terminal_path=settings.terminal_path,
+            controls=controls,
+            expected_login_suffix=settings.expected_login_suffix,
+            require_trading_permissions=settings.orders_enabled,
+        )
+        _write_telemetry(
+            settings,
+            run_id=run_id,
+            iteration=0,
+            snapshot_phase="STARTUP",
+            state=state,
+            broker_inspection=startup_broker,
+            latest_completed_event_time_utc=state.last_event_time_utc,
+            latest_decision=None,
+        )
 
         if settings.flatten_only:
             if not settings.orders_enabled:
@@ -479,7 +786,77 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     state.successful_order_sends + execution.successful_order_sends
                 ),
             )
+            flatten_decision = SimpleNamespace(
+                role=settings.role,
+                run_id=run_id,
+                iteration=0,
+                event_time_utc=state.last_event_time_utc,
+                action="FLATTEN_ONLY",
+                reason="explicit_flatten_only_execution",
+            )
+            if execution.legs:
+                append_unique_rows(
+                    settings.paths.order_events_csv,
+                    execution_audit_rows(
+                        execution=execution,
+                        decision=flatten_decision,
+                    ),
+                    fieldnames=ORDER_EVENT_FIELDS,
+                    key_field="execution_id",
+                )
+            expected_orders, expected_deals = _execution_ticket_sets(execution)
+            _refresh_broker_history(
+                settings,
+                mt5_module=mt5_module,
+                controls=controls,
+                run_id=run_id,
+                observation_started_at=observation_started_at,
+                expected_order_tickets=expected_orders,
+                expected_deal_tickets=expected_deals,
+                retries=10,
+            )
+            final_broker = inspect_broker(
+                mt5_module=mt5_module,
+                terminal_path=settings.terminal_path,
+                controls=controls,
+                expected_login_suffix=settings.expected_login_suffix,
+                require_trading_permissions=True,
+            )
+            _write_telemetry(
+                settings,
+                run_id=run_id,
+                iteration=0,
+                snapshot_phase="FLATTEN_ONLY_FINAL",
+                state=state,
+                broker_inspection=final_broker,
+                latest_completed_event_time_utc=state.last_event_time_utc,
+                latest_decision=flatten_decision,
+            )
+            _write_runtime_event(
+                settings,
+                run_id=run_id,
+                iteration=0,
+                event_type="FLATTEN_ONLY_EXECUTION",
+                event_reason="explicit_flatten_only_completed",
+                severity="WARNING",
+                state=state,
+                event_time_utc=state.last_event_time_utc,
+                details={
+                    "order_send_calls": execution.order_send_calls,
+                    "successful_order_sends": execution.successful_order_sends,
+                },
+            )
             write_state(settings.paths.state, state)
+            _write_runtime_event(
+                settings,
+                run_id=run_id,
+                iteration=0,
+                event_type="WORKER_STOPPED",
+                event_reason="flatten_only_completed",
+                severity="INFO",
+                state=state,
+                event_time_utc=state.last_event_time_utc,
+            )
             _heartbeat(
                 settings,
                 state=state,
@@ -504,7 +881,11 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
 
         iteration = 0
         cached_signal: Any | None = None
+        cached_bar_context: dict[str, Any] = {}
+        cached_signal_context: dict[str, Any] = {}
+        cached_snapshot_context: dict[str, Any] = {}
         last_inference_probe_event_time: str | None = None
+        last_history_refresh_monotonic = 0.0
         while True:
             iteration += 1
             if settings.paths.stop_file.exists():
@@ -526,7 +907,7 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 != last_inference_probe_event_time
             )
             if inference_performed:
-                snapshot, _rates, signal = run_shadow_once(
+                snapshot, rates, signal = run_shadow_once(
                     mt5_module=mt5_module,
                     runtime_config=runtime_config,
                     config_a=config_a,
@@ -541,8 +922,19 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     run_id=run_id,
                 )
                 cached_signal = signal
+                cached_bar_context = completed_bar_context(rates)
+                cached_signal_context = asdict(signal)
                 last_inference_probe_event_time = latest_completed_event_time
                 snapshot_payload = snapshot_to_dict(snapshot)
+                cached_snapshot_context = {
+                    "feature_report": snapshot_payload.get("feature_report", {}),
+                    "time_normalisation": snapshot_payload.get(
+                        "time_normalisation", {}
+                    ),
+                    "rates": snapshot_payload.get("rates", {}),
+                    "strategy_rules": asdict(strategy_rules),
+                    "risk_rules": asdict(risk_rules),
+                }
                 selected_symbol = str(
                     snapshot_payload.get("symbol_resolution", {}).get(
                         "selected_symbol", ""
@@ -585,6 +977,28 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 kill_switch_active=settings.paths.kill_switch_file.exists(),
             )
             state = risk_update.state
+            if risk_update.daily_stop_triggered_now:
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="DAILY_STOP_TRIGGERED",
+                    event_reason="live_account_daily_loss_threshold_reached",
+                    severity="WARNING",
+                    state=state,
+                    event_time_utc=latest_completed_event_time,
+                )
+            if risk_update.total_stop_triggered_now:
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="TOTAL_STOP_TRIGGERED",
+                    event_reason="live_account_total_drawdown_threshold_reached",
+                    severity="CRITICAL",
+                    state=state,
+                    event_time_utc=latest_completed_event_time,
+                )
             reconciliation = reconcile_state(
                 state,
                 broker_inspection.snapshot,
@@ -596,6 +1010,21 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 execution_mode=settings.execution_mode,
             )
             state = reconciliation.state
+            if reconciliation.incident:
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="RECONCILIATION_INCIDENT",
+                    event_reason=reconciliation.reason,
+                    severity="WARNING",
+                    state=state,
+                    event_time_utc=latest_completed_event_time,
+                    details={"status": reconciliation.status},
+                )
+            state_before_decision = replace(state)
+            broker_before = broker_inspection
+            execution = None
             decision = decide_strategy_transition(
                 state,
                 rules=strategy_rules,
@@ -680,18 +1109,136 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     broker_ticket=state.broker_position_ticket,
                 )
 
+            if execution is not None:
+                append_unique_rows(
+                    settings.paths.order_events_csv,
+                    execution_audit_rows(execution=execution, decision=decision),
+                    fieldnames=ORDER_EVENT_FIELDS,
+                    key_field="execution_id",
+                )
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="ORDER_EXECUTION",
+                    event_reason=decision.action,
+                    severity="INFO",
+                    state=state,
+                    event_time_utc=decision.event_time_utc,
+                    details={
+                        "order_send_calls": execution.order_send_calls,
+                        "successful_order_sends": execution.successful_order_sends,
+                        "completed_target": execution.completed_target,
+                        "partial_reason": execution.partial_reason,
+                    },
+                )
+                broker_after = inspect_broker(
+                    mt5_module=mt5_module,
+                    terminal_path=settings.terminal_path,
+                    controls=controls,
+                    expected_login_suffix=settings.expected_login_suffix,
+                    require_trading_permissions=settings.orders_enabled,
+                )
+            else:
+                broker_after = broker_before
+
             last_decision = decision
             write_state(settings.paths.state, state)
             if not decision.duplicate_event:
                 decisions.append(decision)
-                append_csv_atomic_row(
+                append_csv_row(
                     settings.paths.decisions_csv,
-                    decision_to_mapping(decision),
+                    decision_audit_row(
+                        decision=decision,
+                        state_before=state_before_decision,
+                        state_after=state,
+                        bar_context=cached_bar_context,
+                        signal_context=cached_signal_context,
+                        snapshot_context=cached_snapshot_context,
+                        broker_before=broker_before,
+                        broker_after=broker_after,
+                    ),
+                    fieldnames=DECISION_FIELDS,
                 )
                 write_json_atomic(
                     settings.paths.latest_decision,
                     decision_to_mapping(decision),
                 )
+
+            _write_telemetry(
+                settings,
+                run_id=run_id,
+                iteration=iteration,
+                snapshot_phase="POLL",
+                state=state,
+                broker_inspection=broker_after,
+                latest_completed_event_time_utc=latest_completed_event_time,
+                latest_decision=decision,
+            )
+
+            history_due = (
+                execution is not None
+                or time.monotonic() - last_history_refresh_monotonic
+                >= settings.history_refresh_seconds
+            )
+            if history_due:
+                expected_orders: set[int] = set()
+                expected_deals: set[int] = set()
+                if execution is not None:
+                    expected_orders, expected_deals = _execution_ticket_sets(
+                        execution
+                    )
+                try:
+                    deals_added, orders_added = _refresh_broker_history(
+                        settings,
+                        mt5_module=mt5_module,
+                        controls=controls,
+                        run_id=run_id,
+                        observation_started_at=observation_started_at,
+                        expected_order_tickets=expected_orders,
+                        expected_deal_tickets=expected_deals,
+                        retries=(6 if execution is not None else 1),
+                    )
+                except Exception as history_exc:
+                    # Back off to the configured refresh cadence after a failed
+                    # read.  Immediate post-order reads already retry several
+                    # times, so polling again every 30 seconds would only add
+                    # broker/API load and repetitive warning rows.
+                    last_history_refresh_monotonic = time.monotonic()
+                    _write_runtime_event(
+                        settings,
+                        run_id=run_id,
+                        iteration=iteration,
+                        event_type="BROKER_HISTORY_REFRESH_FAILED",
+                        event_reason=str(history_exc),
+                        severity="WARNING",
+                        state=state,
+                        event_time_utc=decision.event_time_utc,
+                    )
+                else:
+                    last_history_refresh_monotonic = time.monotonic()
+                    if deals_added or orders_added:
+                        _write_runtime_event(
+                            settings,
+                            run_id=run_id,
+                            iteration=iteration,
+                            event_type="BROKER_HISTORY_REFRESHED",
+                            event_reason="new_broker_history_rows_persisted",
+                            severity="INFO",
+                            state=state,
+                            event_time_utc=decision.event_time_utc,
+                            details={
+                                "deals_added": deals_added,
+                                "orders_added": orders_added,
+                            },
+                        )
+            _print_poll_status(
+                settings,
+                iteration=iteration,
+                state=state,
+                decision=decision,
+                broker_inspection=broker_after,
+            )
             message = (
                 f"iteration {iteration}: completed M15 event processed"
                 if inference_performed and not decision.duplicate_event
@@ -736,7 +1283,76 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 ),
                 updated_utc=utc_now_iso(),
             )
+            if execution.legs:
+                close_decision = SimpleNamespace(
+                    role=settings.role,
+                    run_id=run_id,
+                    iteration=iteration + 1,
+                    event_time_utc=state.last_event_time_utc,
+                )
+                append_unique_rows(
+                    settings.paths.order_events_csv,
+                    execution_audit_rows(
+                        execution=execution,
+                        decision=close_decision,
+                    ),
+                    fieldnames=ORDER_EVENT_FIELDS,
+                    key_field="execution_id",
+                )
             write_state(settings.paths.state, state)
+            final_expected_orders, final_expected_deals = _execution_ticket_sets(
+                execution
+            )
+            try:
+                _refresh_broker_history(
+                    settings,
+                    mt5_module=mt5_module,
+                    controls=controls,
+                    run_id=run_id,
+                    observation_started_at=observation_started_at,
+                    expected_order_tickets=final_expected_orders,
+                    expected_deal_tickets=final_expected_deals,
+                    retries=10,
+                )
+            except Exception as history_exc:
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="FINAL_BROKER_HISTORY_REFRESH_FAILED",
+                    event_reason=str(history_exc),
+                    severity="CRITICAL",
+                    state=state,
+                    event_time_utc=state.last_event_time_utc,
+                )
+                raise
+        final_broker = inspect_broker(
+            mt5_module=mt5_module,
+            terminal_path=settings.terminal_path,
+            controls=controls,
+            expected_login_suffix=settings.expected_login_suffix,
+            require_trading_permissions=settings.orders_enabled,
+        )
+        _write_telemetry(
+            settings,
+            run_id=run_id,
+            iteration=iteration + 1,
+            snapshot_phase="FINAL",
+            state=state,
+            broker_inspection=final_broker,
+            latest_completed_event_time_utc=state.last_event_time_utc,
+            latest_decision=last_decision,
+        )
+        _write_runtime_event(
+            settings,
+            run_id=run_id,
+            iteration=iteration,
+            event_type="WORKER_STOPPED",
+            event_reason="worker_stopped_cleanly",
+            severity="INFO",
+            state=state,
+            event_time_utc=state.last_event_time_utc,
+        )
         _heartbeat(
             settings,
             state=state,
@@ -762,6 +1378,17 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             traceback.format_exception(type(exc), exc, exc.__traceback__)
         )
         try:
+            _write_runtime_event(
+                settings,
+                run_id=run_id,
+                iteration=locals().get("iteration", 0),
+                event_type="WORKER_ERROR",
+                event_reason=str(exc),
+                severity="CRITICAL",
+                state=state,
+                event_time_utc=state.last_event_time_utc,
+                details={"traceback": error_text},
+            )
             _heartbeat(
                 settings,
                 state=state,

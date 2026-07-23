@@ -22,6 +22,7 @@ from capstone_trading.evaluation.model_b_replay import (
     compute_model_b_diagnostics,
     replay_model_b,
 )
+from capstone_trading.policy.position_transition import resolve_position_transition
 from capstone_trading.evaluation.trading_replay import (
     ModelAOverlayRules,
     ReplayMetrics,
@@ -256,13 +257,6 @@ def _model_a_signal(probability: float, rules: ModelAOverlayRules) -> int:
     return 0
 
 
-def _model_a_policy_units(previous_position: int, next_position: int, rules: ModelAOverlayRules) -> int:
-    if previous_position == next_position:
-        return 0
-    if previous_position != 0 and next_position != 0 and previous_position != next_position:
-        return rules.reversal_policy_event_units
-    return 1
-
 
 @dataclass
 class ModelARuntimeState:
@@ -421,14 +415,32 @@ class ModelARuntimeState:
                     next_position = previous_position
                     blocked_reason = "minimum_hold_active"
                 else:
-                    candidate_policy_units = _model_a_policy_units(previous_position, desired_position, self.rules)
-                    if self.policy_changes_today + candidate_policy_units <= self.rules.max_policy_changes_per_day:
-                        next_position = desired_position
-                        policy_event_units = candidate_policy_units
-                        self.policy_changes_today += candidate_policy_units
-                        self.policy_change_events += candidate_policy_units
+                    resolution = resolve_position_transition(
+                        current_position=previous_position,
+                        desired_position=desired_position,
+                        policy_changes_today=self.policy_changes_today,
+                        max_policy_changes_per_day=(
+                            self.rules.max_policy_changes_per_day
+                        ),
+                        reversal_policy_event_units=(
+                            self.rules.reversal_policy_event_units
+                        ),
+                        allow_risk_reducing_exit_when_capped=(
+                            self.rules.allow_risk_reducing_exit_when_capped
+                        ),
+                    )
+                    next_position = int(resolution.effective_target_position)
+                    policy_event_units = int(resolution.consumed_policy_units)
+                    if next_position != previous_position:
+                        self.policy_changes_today += policy_event_units
+                        self.policy_change_events += policy_event_units
+                        if resolution.close_only_reversal:
+                            blocked_reason = (
+                                "daily_change_cap_close_only_reversal"
+                            )
+                        elif resolution.cap_reached and resolution.exit_allowed:
+                            blocked_reason = "daily_change_cap_exit_allowed"
                     else:
-                        next_position = previous_position
                         blocked_reason = "daily_change_cap_active"
             else:
                 next_position = previous_position

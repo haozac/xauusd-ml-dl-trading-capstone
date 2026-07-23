@@ -25,6 +25,11 @@ import csv
 import json
 import math
 
+from capstone_trading.policy.position_transition import (
+    policy_event_units as shared_policy_event_units,
+    resolve_position_transition,
+)
+
 M15_DELTA = timedelta(minutes=15)
 POSITION_NAMES: Mapping[int, str] = {-1: "SHORT", 0: "FLAT", 1: "LONG"}
 VALID_POSITIONS = frozenset(POSITION_NAMES)
@@ -45,6 +50,7 @@ class StrategyRules:
     max_successful_entries_per_utc_day: int | None
     long_only: bool
     reversal_policy_event_units: int = 1
+    allow_risk_reducing_exit_when_capped: bool = True
 
     def validate(self) -> None:
         if self.role not in {"model_a", "model_b"}:
@@ -189,6 +195,11 @@ class StrategyDecision:
     total_stop_active: bool
     kill_switch_active: bool
     reconciliation_status: str
+    policy_cap_reached: bool = False
+    entry_blocked_by_policy_cap: bool = False
+    exit_allowed_when_capped: bool = False
+    close_only_reversal: bool = False
+    requested_policy_event_units: int = 0
     order_check_called: bool = False
     order_check_passed: bool | None = None
     order_send_called: bool = False
@@ -668,11 +679,11 @@ def desired_position_from_probability(
 
 
 def policy_event_units(previous: int, target: int, rules: StrategyRules) -> int:
-    if previous == target:
-        return 0
-    if previous != 0 and target != 0 and previous != target:
-        return int(rules.reversal_policy_event_units)
-    return 1
+    return shared_policy_event_units(
+        previous,
+        target,
+        reversal_policy_event_units=rules.reversal_policy_event_units,
+    )
 
 
 def _decision(
@@ -691,6 +702,11 @@ def _decision(
     gap: bool,
     stale: bool,
     units: int = 0,
+    requested_units: int | None = None,
+    policy_cap_reached: bool = False,
+    entry_blocked_by_policy_cap: bool = False,
+    exit_allowed_when_capped: bool = False,
+    close_only_reversal: bool = False,
 ) -> StrategyDecision:
     return StrategyDecision(
         role=state.role,
@@ -714,6 +730,13 @@ def _decision(
         total_stop_active=bool(state.total_stop_active),
         kill_switch_active=bool(state.kill_switch_active),
         reconciliation_status=str(state.reconciliation_status),
+        policy_cap_reached=bool(policy_cap_reached),
+        entry_blocked_by_policy_cap=bool(entry_blocked_by_policy_cap),
+        exit_allowed_when_capped=bool(exit_allowed_when_capped),
+        close_only_reversal=bool(close_only_reversal),
+        requested_policy_event_units=int(
+            units if requested_units is None else requested_units
+        ),
         decision_utc=utc_now_iso(),
     )
 
@@ -929,9 +952,19 @@ def decide_strategy_transition(
                 gap=False,
                 stale=False,
             )
-        units = policy_event_units(current, desired, rules)
         assert rules.max_policy_changes_per_utc_day is not None
-        if state.policy_changes_today + units > rules.max_policy_changes_per_utc_day:
+        resolution = resolve_position_transition(
+            current_position=current,
+            desired_position=desired,
+            policy_changes_today=state.policy_changes_today,
+            max_policy_changes_per_day=rules.max_policy_changes_per_utc_day,
+            reversal_policy_event_units=rules.reversal_policy_event_units,
+            allow_risk_reducing_exit_when_capped=(
+                rules.allow_risk_reducing_exit_when_capped
+            ),
+        )
+        units = int(resolution.consumed_policy_units)
+        if not resolution.transition_allowed:
             return _decision(
                 state=state,
                 rules=rules,
@@ -942,10 +975,58 @@ def decide_strategy_transition(
                 desired=desired,
                 target=current,
                 action="BLOCK_DAILY_POLICY_CAP",
-                reason="maximum_overlay_position_changes_per_utc_day_reached",
+                reason=resolution.reason,
                 duplicate=False,
                 gap=False,
                 stale=False,
+                units=0,
+                requested_units=resolution.requested_policy_units,
+                policy_cap_reached=resolution.cap_reached,
+                entry_blocked_by_policy_cap=resolution.entry_blocked,
+                exit_allowed_when_capped=resolution.exit_allowed,
+                close_only_reversal=resolution.close_only_reversal,
+            )
+        if resolution.close_only_reversal:
+            return _decision(
+                state=state,
+                rules=rules,
+                run_id=run_id,
+                iteration=iteration,
+                event_time_utc=event_time_utc,
+                probability_up=float(probability_up),
+                desired=desired,
+                target=resolution.effective_target_position,
+                action="CLOSE_ONLY_DAILY_POLICY_CAP",
+                reason=resolution.reason,
+                duplicate=False,
+                gap=False,
+                stale=False,
+                units=units,
+                requested_units=resolution.requested_policy_units,
+                policy_cap_reached=True,
+                entry_blocked_by_policy_cap=True,
+                exit_allowed_when_capped=True,
+                close_only_reversal=True,
+            )
+        if resolution.cap_reached and resolution.exit_allowed:
+            return _decision(
+                state=state,
+                rules=rules,
+                run_id=run_id,
+                iteration=iteration,
+                event_time_utc=event_time_utc,
+                probability_up=float(probability_up),
+                desired=desired,
+                target=resolution.effective_target_position,
+                action="EXIT_POSITION_CAP_REACHED",
+                reason=resolution.reason,
+                duplicate=False,
+                gap=False,
+                stale=False,
+                units=units,
+                requested_units=resolution.requested_policy_units,
+                policy_cap_reached=True,
+                exit_allowed_when_capped=True,
             )
     else:
         units = 1 if current != desired else 0
@@ -1042,10 +1123,7 @@ def apply_transition(
     policy_changes = state.policy_changes_today
     successful_entries = state.successful_entries_today
     completed_cycles = state.completed_entry_exit_cycles
-    if (
-        target != previous
-        and decision.reason.startswith("frozen_overlay_transition")
-    ):
+    if target != previous and int(decision.policy_event_units) > 0:
         policy_changes += int(decision.policy_event_units)
     if previous == 0 and target != 0:
         successful_entries += 1

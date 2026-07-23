@@ -349,3 +349,58 @@ def test_live_reconciliation_conservatively_counts_adopted_entry() -> None:
     assert result.incident is True
     assert result.state.successful_entries_today == 1
     assert result.state.policy_changes_today == 1
+
+
+def test_model_a_daily_cap_allows_normal_exit() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="shadow"),
+        virtual_position=1,
+        hold_bars=4,
+        policy_changes_today=3,
+        last_event_time_utc="2026-07-21T15:30:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="test",
+        iteration=1,
+        event_time_utc="2026-07-21T15:45:00+00:00",
+        probability_up=0.50,
+        stale_event_warning=False,
+        reconciliation_blocked=False,
+    )
+    after = apply_transition(
+        state,
+        decision,
+        confirmed_position=0,
+        broker_ticket=None,
+    )
+    assert decision.action == "EXIT_POSITION_CAP_REACHED"
+    assert decision.target_position == 0
+    assert decision.exit_allowed_when_capped is True
+    assert after.policy_changes_today == 4
+
+
+def test_model_a_daily_cap_converts_reversal_to_close_only() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="shadow"),
+        virtual_position=1,
+        hold_bars=4,
+        policy_changes_today=3,
+        last_event_time_utc="2026-07-21T15:30:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="test",
+        iteration=1,
+        event_time_utc="2026-07-21T15:45:00+00:00",
+        probability_up=0.40,
+        stale_event_warning=False,
+        reconciliation_blocked=False,
+    )
+    assert decision.action == "CLOSE_ONLY_DAILY_POLICY_CAP"
+    assert decision.desired_position == -1
+    assert decision.target_position == 0
+    assert decision.close_only_reversal is True
+    assert decision.entry_blocked_by_policy_cap is True
