@@ -538,14 +538,14 @@ def test_session_gap_lockout_schedule_covers_daily_break_and_weekend() -> None:
         weekend_end_utc_minutes=weekend_reopen,
     )
     sunday_before_open = session_gap_lockout_status(
-        datetime(2026, 7, 26, 20, 59, tzinfo=timezone.utc),
+        datetime(2026, 7, 26, 21, 59, tzinfo=timezone.utc),
         enabled=True,
         start_utc_minutes=start,
         daily_end_utc_minutes=daily_reopen,
         weekend_end_utc_minutes=weekend_reopen,
     )
     sunday_open = session_gap_lockout_status(
-        datetime(2026, 7, 26, 21, 0, tzinfo=timezone.utc),
+        datetime(2026, 7, 26, 22, 0, tzinfo=timezone.utc),
         enabled=True,
         start_utc_minutes=start,
         daily_end_utc_minutes=daily_reopen,
