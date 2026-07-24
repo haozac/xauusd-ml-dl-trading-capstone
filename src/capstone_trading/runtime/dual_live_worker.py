@@ -57,6 +57,7 @@ from capstone_trading.runtime.dual_live_state import (
     heartbeat_payload,
     load_state,
     reconcile_state,
+    session_gap_lockout_status,
     summarise_decisions,
     update_decision_execution,
     update_risk_state,
@@ -147,6 +148,10 @@ class WorkerSettings:
     flatten_on_clean_stop: bool
     flatten_only: bool
     confirmation: str | None
+    session_gap_lockout_enabled: bool = True
+    session_gap_lockout_start_utc_minutes: int = 20 * 60 + 30
+    session_gap_lockout_daily_end_utc_minutes: int = 22 * 60
+    session_gap_lockout_weekend_end_utc_minutes: int = 21 * 60
     allow_onednn: bool = False
 
 
@@ -155,6 +160,23 @@ def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise DualLiveWorkerError(f"Config section {key!r} must be a mapping")
     return value
+
+
+def _parse_utc_hhmm(value: Any, *, field_name: str) -> int:
+    text = str(value).strip()
+    try:
+        hour_text, minute_text = text.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except (TypeError, ValueError) as exc:
+        raise DualLiveWorkerError(
+            f"{field_name} must use HH:MM UTC format"
+        ) from exc
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise DualLiveWorkerError(
+            f"{field_name} must use a valid HH:MM UTC time"
+        )
+    return hour * 60 + minute
 
 
 def load_worker_settings(
@@ -171,6 +193,7 @@ def load_worker_settings(
         raise DualLiveWorkerError(f"Unsupported role: {role}")
     raw = load_yaml_mapping(config_path)
     runtime = _mapping(raw, "runtime")
+    market_session_safety = _mapping(raw, "market_session_safety")
     models = _mapping(raw, "models")
     paths = _mapping(raw, "paths")
     role_config = _mapping(models, role)
@@ -227,6 +250,23 @@ def load_worker_settings(
         shadow_unused_state=role_root / "shadow_internal_state.json",
         shadow_unused_signals=role_root / "shadow_internal_signals.csv",
     )
+    lockout_start = _parse_utc_hhmm(
+        market_session_safety.get("pre_break_flatten_utc", "20:30"),
+        field_name="market_session_safety.pre_break_flatten_utc",
+    )
+    lockout_end = _parse_utc_hhmm(
+        market_session_safety.get("daily_reopen_utc", "22:00"),
+        field_name="market_session_safety.daily_reopen_utc",
+    )
+    weekend_lockout_end = _parse_utc_hhmm(
+        market_session_safety.get("weekend_reopen_utc", "21:00"),
+        field_name="market_session_safety.weekend_reopen_utc",
+    )
+    if lockout_start >= lockout_end:
+        raise DualLiveWorkerError(
+            "market_session_safety.pre_break_flatten_utc must be before "
+            "daily_reopen_utc"
+        )
     return WorkerSettings(
         repo_root=repo_root,
         role=role,
@@ -257,6 +297,12 @@ def load_worker_settings(
         flatten_on_clean_stop=bool(runtime.get("flatten_on_clean_stop", True)),
         flatten_only=bool(flatten_only),
         confirmation=confirmation,
+        session_gap_lockout_enabled=bool(
+            market_session_safety.get("enabled", True)
+        ),
+        session_gap_lockout_start_utc_minutes=lockout_start,
+        session_gap_lockout_daily_end_utc_minutes=lockout_end,
+        session_gap_lockout_weekend_end_utc_minutes=weekend_lockout_end,
         allow_onednn=bool(runtime.get("allow_onednn", False)),
     )
 
@@ -404,6 +450,7 @@ def _write_telemetry(
     broker_inspection: Any,
     latest_completed_event_time_utc: str | None,
     latest_decision: Any,
+    server_time_offset_hours: int = 0,
 ) -> None:
     append_csv_row(
         settings.paths.telemetry_csv,
@@ -421,6 +468,7 @@ def _write_telemetry(
             broker_inspection=broker_inspection,
             stop_file_exists=settings.paths.stop_file.exists(),
             kill_switch_file_exists=settings.paths.kill_switch_file.exists(),
+            server_time_offset_hours=server_time_offset_hours,
         ),
         fieldnames=TELEMETRY_FIELDS,
     )
@@ -467,6 +515,7 @@ def _refresh_broker_history(
     expected_deal_tickets: set[int] | None = None,
     retries: int = 1,
     retry_sleep_seconds: float = 0.5,
+    server_time_offset_hours: int = 0,
 ) -> tuple[int, int]:
     expected_orders = set(expected_order_tickets or ())
     expected_deals = set(expected_deal_tickets or ())
@@ -491,6 +540,7 @@ def _refresh_broker_history(
                 role=settings.role,
                 run_id=run_id,
                 captured_utc=audit.captured_utc,
+                server_time_offset_hours=server_time_offset_hours,
             )
             for row in audit.deals
         ]
@@ -500,6 +550,7 @@ def _refresh_broker_history(
                 role=settings.role,
                 run_id=run_id,
                 captured_utc=audit.captured_utc,
+                server_time_offset_hours=server_time_offset_hours,
             )
             for row in audit.orders
         ]
@@ -643,6 +694,20 @@ def _report(
             "completed_m15_decision_audit": True,
             "order_and_broker_history_audit": True,
             "performance_metrics_calculated_offline": True,
+            "market_event_clock_drives_transition_safety": True,
+            "canonical_broker_audit_timestamps": True,
+            "session_gap_lockout_enabled": (
+                settings.session_gap_lockout_enabled
+            ),
+            "session_gap_lockout_start_utc_minutes": (
+                settings.session_gap_lockout_start_utc_minutes
+            ),
+            "session_gap_lockout_daily_end_utc_minutes": (
+                settings.session_gap_lockout_daily_end_utc_minutes
+            ),
+            "session_gap_lockout_weekend_end_utc_minutes": (
+                settings.session_gap_lockout_weekend_end_utc_minutes
+            ),
         },
     }
 
@@ -759,6 +824,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             broker_inspection=startup_broker,
             latest_completed_event_time_utc=state.last_event_time_utc,
             latest_decision=None,
+            server_time_offset_hours=int(
+                runtime_config.mt5_server_time_offset_hours
+            ),
         )
 
         if settings.flatten_only:
@@ -793,6 +861,10 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 event_time_utc=state.last_event_time_utc,
                 action="FLATTEN_ONLY",
                 reason="explicit_flatten_only_execution",
+                audit_trigger_type="CONTROL_FLATTEN_ONLY",
+                audit_trigger_id=(
+                    f"CONTROL_FLATTEN_ONLY:{settings.role}:{run_id}:0"
+                ),
             )
             if execution.legs:
                 append_unique_rows(
@@ -814,6 +886,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 expected_order_tickets=expected_orders,
                 expected_deal_tickets=expected_deals,
                 retries=10,
+                server_time_offset_hours=int(
+                    runtime_config.mt5_server_time_offset_hours
+                ),
             )
             final_broker = inspect_broker(
                 mt5_module=mt5_module,
@@ -831,6 +906,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 broker_inspection=final_broker,
                 latest_completed_event_time_utc=state.last_event_time_utc,
                 latest_decision=flatten_decision,
+                server_time_offset_hours=int(
+                    runtime_config.mt5_server_time_offset_hours
+                ),
             )
             _write_runtime_event(
                 settings,
@@ -886,6 +964,7 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
         cached_snapshot_context: dict[str, Any] = {}
         last_inference_probe_event_time: str | None = None
         last_history_refresh_monotonic = 0.0
+        previous_session_gap_lockout: bool | None = None
         while True:
             iteration += 1
             if settings.paths.stop_file.exists():
@@ -1025,16 +1104,81 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             state_before_decision = replace(state)
             broker_before = broker_inspection
             execution = None
+            session_lockout_active, session_lockout_reason = (
+                session_gap_lockout_status(
+                    datetime.now(timezone.utc),
+                    enabled=settings.session_gap_lockout_enabled,
+                    start_utc_minutes=(
+                        settings.session_gap_lockout_start_utc_minutes
+                    ),
+                    daily_end_utc_minutes=(
+                        settings.session_gap_lockout_daily_end_utc_minutes
+                    ),
+                    weekend_end_utc_minutes=(
+                        settings.session_gap_lockout_weekend_end_utc_minutes
+                    ),
+                )
+            )
+            if (
+                previous_session_gap_lockout is None
+                and session_lockout_active
+            ) or (
+                previous_session_gap_lockout is not None
+                and previous_session_gap_lockout != session_lockout_active
+            ):
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type=(
+                        "SESSION_GAP_LOCKOUT_STARTED"
+                        if session_lockout_active
+                        else "SESSION_GAP_LOCKOUT_ENDED"
+                    ),
+                    event_reason=session_lockout_reason,
+                    severity="WARNING" if session_lockout_active else "INFO",
+                    state=state,
+                    event_time_utc=latest_completed_event_time,
+                    details={
+                        "pre_break_flatten_utc_minutes": (
+                            settings.session_gap_lockout_start_utc_minutes
+                        ),
+                        "daily_reopen_utc_minutes": (
+                            settings.session_gap_lockout_daily_end_utc_minutes
+                        ),
+                        "weekend_reopen_utc_minutes": (
+                            settings.session_gap_lockout_weekend_end_utc_minutes
+                        ),
+                    },
+                )
+            previous_session_gap_lockout = session_lockout_active
             decision = decide_strategy_transition(
                 state,
                 rules=strategy_rules,
                 run_id=run_id,
                 iteration=iteration,
-                event_time_utc=signal.event_time_utc,
-                probability_up=float(signal.probability_up),
+                # Transition safety follows the broker's latest completed M15
+                # event, not the latest valid model-sequence endpoint.  Around
+                # session/weekend gaps the model signal can remain anchored to
+                # an older contiguous window for up to 48 bars; using that stale
+                # timestamp would misclassify every new broker bar as a duplicate
+                # and delay mandatory gap flattening.
+                event_time_utc=latest_completed_event_time,
+                # A probability whose endpoint is older than the current broker
+                # event is not a current prediction.  Keep the original signal
+                # context for diagnosis, but pass no probability into the
+                # transition/audit row while the frozen contiguous sequence is
+                # unavailable.
+                probability_up=(
+                    None
+                    if bool(signal.stale_event_warning)
+                    else float(signal.probability_up)
+                ),
                 stale_event_warning=bool(signal.stale_event_warning),
                 reconciliation_blocked=reconciliation.blocked,
                 reconciliation_reason=reconciliation.reason,
+                session_gap_lockout_active=session_lockout_active,
+                session_gap_lockout_reason=session_lockout_reason,
             )
             if decision.duplicate_event:
                 # Duplicate M15 events do not advance hold/cooldown counters and
@@ -1174,6 +1318,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 broker_inspection=broker_after,
                 latest_completed_event_time_utc=latest_completed_event_time,
                 latest_decision=decision,
+                server_time_offset_hours=int(
+                    runtime_config.mt5_server_time_offset_hours
+                ),
             )
 
             history_due = (
@@ -1198,6 +1345,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                         expected_order_tickets=expected_orders,
                         expected_deal_tickets=expected_deals,
                         retries=(6 if execution is not None else 1),
+                        server_time_offset_hours=int(
+                            runtime_config.mt5_server_time_offset_hours
+                        ),
                     )
                 except Exception as history_exc:
                     # Back off to the configured refresh cadence after a failed
@@ -1289,6 +1439,13 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     run_id=run_id,
                     iteration=iteration + 1,
                     event_time_utc=state.last_event_time_utc,
+                    action="CLEAN_STOP_FLATTEN",
+                    reason="clean_stop_control_flatten",
+                    audit_trigger_type="CONTROL_CLEAN_STOP",
+                    audit_trigger_id=(
+                        f"CONTROL_CLEAN_STOP:{settings.role}:{run_id}:"
+                        f"{iteration + 1}"
+                    ),
                 )
                 append_unique_rows(
                     settings.paths.order_events_csv,
@@ -1313,6 +1470,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     expected_order_tickets=final_expected_orders,
                     expected_deal_tickets=final_expected_deals,
                     retries=10,
+                    server_time_offset_hours=int(
+                        runtime_config.mt5_server_time_offset_hours
+                    ),
                 )
             except Exception as history_exc:
                 _write_runtime_event(
@@ -1342,6 +1502,9 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             broker_inspection=final_broker,
             latest_completed_event_time_utc=state.last_event_time_utc,
             latest_decision=last_decision,
+            server_time_offset_hours=int(
+                runtime_config.mt5_server_time_offset_hours
+            ),
         )
         _write_runtime_event(
             settings,

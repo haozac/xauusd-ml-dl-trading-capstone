@@ -27,7 +27,27 @@ class RoleObservationSummary:
     audit_gate_failures: tuple[str, ...]
     telemetry_rows: int
     decision_rows: int
+    unique_completed_event_count: int
+    broker_event_disposition_coverage_ratio: float | None
+    completed_event_coverage_ratio: float | None
+    missing_completed_event_decision_count: int
+    model_prediction_count: int
+    model_unavailable_event_count: int
+    model_prediction_coverage_ratio: float | None
+    model_availability_status: str
+    model_prediction_endpoint_mismatch_count: int
+    contiguity_warmup_event_count: int
+    model_unavailable_exposure_after_disposition_count: int
+    maximum_gap_control_processing_delay_seconds: float | None
+    maximum_completed_to_decision_lag_minutes: float | None
+    stale_completed_event_count: int
+    gap_decision_count: int
     order_event_rows: int
+    control_execution_count: int
+    strategy_execution_missing_decision_link_count: int
+    invalid_control_execution_link_count: int
+    unknown_execution_trigger_count: int
+    maximum_broker_order_time_alignment_seconds: float | None
     broker_deal_rows: int
     broker_order_rows: int
     runtime_event_rows: int
@@ -584,6 +604,194 @@ def analyse_role(
         telemetry["snapshot_utc"], utc=True, errors="coerce"
     )
     telemetry = telemetry.sort_values("snapshot_utc_parsed")
+
+    completed_event_times = pd.to_datetime(
+        telemetry.get(
+            "latest_completed_event_time_utc", pd.Series(dtype="object")
+        ),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    ).dropna()
+    unique_completed_events = pd.DatetimeIndex(
+        completed_event_times.drop_duplicates().sort_values()
+    )
+    decision_event_times = pd.to_datetime(
+        decisions.get("event_time_utc", pd.Series(dtype="object")),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    ).dropna()
+    unique_decision_events = pd.DatetimeIndex(
+        decision_event_times.drop_duplicates().sort_values()
+    )
+    missing_completed_events = unique_completed_events.difference(
+        unique_decision_events
+    )
+    broker_event_disposition_coverage_ratio = (
+        None
+        if len(unique_completed_events) == 0
+        else float(
+            (len(unique_completed_events) - len(missing_completed_events))
+            / len(unique_completed_events)
+        )
+    )
+    # Backward-compatible alias retained for existing reports.
+    completed_event_coverage_ratio = broker_event_disposition_coverage_ratio
+
+    decision_stale = _boolean(decisions, "stale_event_warning").fillna(False)
+    if "model_prediction_available" in decisions.columns:
+        prediction_available = _boolean(
+            decisions, "model_prediction_available"
+        ).fillna(False)
+    elif "probability_up" in decisions.columns:
+        prediction_available = (
+            pd.to_numeric(decisions["probability_up"], errors="coerce").notna()
+            & ~decision_stale
+        )
+    else:
+        # Legacy fixtures/reports predate the explicit availability field.
+        prediction_available = pd.Series(
+            True, index=decisions.index, dtype="bool"
+        )
+    prediction_event_times = pd.to_datetime(
+        decisions.loc[prediction_available, "event_time_utc"]
+        if "event_time_utc" in decisions.columns
+        else pd.Series(dtype="object"),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    ).dropna()
+    unique_prediction_events = pd.DatetimeIndex(
+        prediction_event_times.drop_duplicates().sort_values()
+    )
+    model_prediction_count = int(len(unique_prediction_events))
+    model_unavailable_event_count = int(
+        max(0, len(unique_completed_events) - model_prediction_count)
+    )
+    model_prediction_coverage_ratio = (
+        None
+        if len(unique_completed_events) == 0
+        else float(model_prediction_count / len(unique_completed_events))
+    )
+    if model_prediction_coverage_ratio is None:
+        model_availability_status = "NOT_OBSERVED"
+    elif model_prediction_coverage_ratio >= 0.999999:
+        model_availability_status = "FULL"
+    elif model_prediction_coverage_ratio > 0.0:
+        model_availability_status = "LIMITED"
+    else:
+        model_availability_status = "UNAVAILABLE"
+
+    prediction_endpoint_mismatch_count = 0
+    if {
+        "model_prediction_event_time_utc",
+        "event_time_utc",
+    }.issubset(decisions.columns):
+        prediction_endpoint = pd.to_datetime(
+            decisions["model_prediction_event_time_utc"],
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+        disposition_event = pd.to_datetime(
+            decisions["event_time_utc"],
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+        prediction_endpoint_mismatch_count = int(
+            (
+                prediction_available
+                & (
+                    prediction_endpoint.isna()
+                    | disposition_event.isna()
+                    | (prediction_endpoint != disposition_event)
+                )
+            ).sum()
+        )
+
+    action_series = decisions.get(
+        "action", pd.Series("", index=decisions.index, dtype="object")
+    ).fillna("").astype(str)
+    contiguity_warmup_mask = action_series.eq(
+        "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"
+    )
+    contiguity_warmup_event_count = int(contiguity_warmup_mask.sum())
+    unavailable_mask = ~prediction_available
+    target_positions = _numeric(decisions, "target_position").fillna(0.0)
+    broker_after_positions = _numeric(
+        decisions, "broker_position_after_inspection"
+    ).fillna(target_positions)
+    model_unavailable_exposure_after_disposition_count = int(
+        (
+            unavailable_mask
+            & ((target_positions != 0.0) | (broker_after_positions != 0.0))
+        ).sum()
+    )
+
+    gap_control_mask = action_series.isin(
+        {"CONTROL_GAP_FLATTEN", "CONTROL_GAP_BLOCK"}
+    )
+    gap_event_time = pd.to_datetime(
+        decisions.get("event_time_utc", pd.Series(dtype="object")),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    gap_decision_time = pd.to_datetime(
+        decisions.get("decision_utc", pd.Series(dtype="object")),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    gap_control_delay = (
+        gap_decision_time
+        - gap_event_time
+        - pd.Timedelta(minutes=15)
+    ).dt.total_seconds()
+    gap_control_delay = gap_control_delay[
+        gap_control_mask & gap_control_delay.notna()
+    ].clip(lower=0.0)
+    maximum_gap_control_processing_delay_seconds = (
+        None
+        if gap_control_delay.empty
+        else float(gap_control_delay.max())
+    )
+
+    telemetry_latest_decision = pd.to_datetime(
+        telemetry.get(
+            "latest_decision_event_time_utc", pd.Series(dtype="object")
+        ),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    completed_to_decision_lag = (
+        (
+            pd.to_datetime(
+                telemetry.get(
+                    "latest_completed_event_time_utc",
+                    pd.Series(dtype="object"),
+                ),
+                utc=True,
+                errors="coerce",
+                format="mixed",
+            )
+            - telemetry_latest_decision
+        )
+        .dt.total_seconds()
+        .div(60.0)
+        .dropna()
+    )
+    completed_to_decision_lag = completed_to_decision_lag[
+        completed_to_decision_lag >= 0.0
+    ]
+    maximum_completed_to_decision_lag = (
+        None
+        if completed_to_decision_lag.empty
+        else float(completed_to_decision_lag.max())
+    )
     timestamps = telemetry["snapshot_utc_parsed"].dropna()
     first_snapshot = None if timestamps.empty else timestamps.min().isoformat()
     last_snapshot = None if timestamps.empty else timestamps.max().isoformat()
@@ -638,6 +846,37 @@ def analyse_role(
 
     successful_orders_mask = _boolean(order_events, "order_send_passed").fillna(False)
     successful_orders = order_events.loc[successful_orders_mask].copy()
+    trigger_types = (
+        order_events["trigger_type"]
+        if "trigger_type" in order_events.columns
+        else pd.Series("", index=order_events.index, dtype="object")
+    ).fillna("").astype(str).str.upper()
+    decision_ids = set(
+        decisions.get("decision_id", pd.Series(dtype="object"))
+        .dropna()
+        .astype(str)
+    )
+    order_decision_ids = (
+        order_events["decision_id"]
+        if "decision_id" in order_events.columns
+        else pd.Series("", index=order_events.index, dtype="object")
+    ).fillna("").astype(str)
+    strategy_trigger_mask = trigger_types == "STRATEGY_DECISION"
+    control_trigger_mask = trigger_types.str.startswith("CONTROL_")
+    unknown_trigger_mask = ~(strategy_trigger_mask | control_trigger_mask)
+    strategy_execution_missing_decision_link_count = int(
+        (
+            strategy_trigger_mask
+            & ~order_decision_ids.isin(decision_ids)
+        ).sum()
+    )
+    invalid_control_execution_link_count = int(
+        (
+            control_trigger_mask
+            & ~order_decision_ids.str.startswith("CONTROL_")
+        ).sum()
+    )
+    unknown_execution_trigger_count = int(unknown_trigger_mask.sum())
     order_event_order_tickets = _ticket_set(successful_orders, "order_ticket")
     order_event_deal_tickets = _ticket_set(successful_orders, "deal_ticket")
     broker_order_tickets = _ticket_set(orders, "ticket")
@@ -714,9 +953,43 @@ def analyse_role(
             == "broker_deal_history"
         ).sum()
     )
+    maximum_broker_order_time_alignment_seconds = None
+    if not successful_orders.empty and not orders.empty:
+        event_times = successful_orders.loc[
+            :, ["order_ticket", "completed_utc"]
+        ].copy()
+        broker_times = orders.loc[:, ["ticket", "time_done_utc"]].copy()
+        event_times["ticket_key"] = pd.to_numeric(
+            event_times["order_ticket"], errors="coerce"
+        ).astype("Int64")
+        broker_times["ticket_key"] = pd.to_numeric(
+            broker_times["ticket"], errors="coerce"
+        ).astype("Int64")
+        event_times["completed_parsed"] = pd.to_datetime(
+            event_times["completed_utc"], utc=True, errors="coerce"
+        )
+        broker_times["done_parsed"] = pd.to_datetime(
+            broker_times["time_done_utc"], utc=True, errors="coerce"
+        )
+        aligned = event_times.merge(
+            broker_times.loc[:, ["ticket_key", "done_parsed"]],
+            on="ticket_key",
+            how="inner",
+        )
+        alignment_seconds = (
+            aligned["completed_parsed"] - aligned["done_parsed"]
+        ).dt.total_seconds().abs().dropna()
+        if not alignment_seconds.empty:
+            maximum_broker_order_time_alignment_seconds = float(
+                alignment_seconds.max()
+            )
     telemetry_spread = _numeric(telemetry, "spread_points").dropna()
-    actions = decisions.get("action", pd.Series(dtype="object")).fillna("").astype(str)
+    actions = action_series
     blocked = actions.str.startswith("BLOCK_")
+    stale_completed_event_count = int(decision_stale.sum())
+    gap_decision_count = int(
+        actions.isin({"CONTROL_GAP_FLATTEN", "CONTROL_GAP_BLOCK"}).sum()
+    )
     event_types = runtime_events.get(
         "event_type", pd.Series(dtype="object")
     ).fillna("").astype(str)
@@ -801,6 +1074,27 @@ def analyse_role(
         ("successful_orders_missing_fill_price", missing_fill_price_count),
         ("broker_orders_without_execution", len(broker_orders_without_execution)),
         ("broker_deals_without_execution", broker_deal_missing_execution_count),
+        (
+            "missing_completed_event_dispositions",
+            len(missing_completed_events),
+        ),
+        (
+            "model_prediction_endpoint_mismatches",
+            prediction_endpoint_mismatch_count,
+        ),
+        (
+            "model_unavailable_exposure_after_disposition",
+            model_unavailable_exposure_after_disposition_count,
+        ),
+        (
+            "strategy_executions_missing_decision_link",
+            strategy_execution_missing_decision_link_count,
+        ),
+        (
+            "invalid_control_execution_links",
+            invalid_control_execution_link_count,
+        ),
+        ("unknown_execution_triggers", unknown_execution_trigger_count),
     ):
         if count:
             audit_failures.append(f"{label}={count}")
@@ -813,6 +1107,38 @@ def analyse_role(
     if coverage_ratio is not None and coverage_ratio < 0.90:
         audit_failures.append(
             f"telemetry_coverage_ratio={coverage_ratio:.6f}<0.90"
+        )
+    if (
+        completed_event_coverage_ratio is not None
+        and completed_event_coverage_ratio < 0.999999
+    ):
+        audit_failures.append(
+            "broker_event_disposition_coverage_ratio="
+            f"{completed_event_coverage_ratio:.6f}<1.0"
+        )
+    if (
+        maximum_gap_control_processing_delay_seconds is not None
+        and maximum_gap_control_processing_delay_seconds > 90.0
+    ):
+        audit_failures.append(
+            "maximum_gap_control_processing_delay_seconds="
+            f"{maximum_gap_control_processing_delay_seconds:.6f}>90.0"
+        )
+    if (
+        maximum_completed_to_decision_lag is not None
+        and maximum_completed_to_decision_lag > 15.1
+    ):
+        audit_failures.append(
+            "maximum_completed_to_decision_lag_minutes="
+            f"{maximum_completed_to_decision_lag:.6f}>15.1"
+        )
+    if (
+        maximum_broker_order_time_alignment_seconds is not None
+        and maximum_broker_order_time_alignment_seconds > 60.0
+    ):
+        audit_failures.append(
+            "maximum_broker_order_time_alignment_seconds="
+            f"{maximum_broker_order_time_alignment_seconds:.6f}>60.0"
         )
     for label, mismatch in (
         ("decision_record_count_mismatch", decision_count_mismatch),
@@ -855,7 +1181,43 @@ def analyse_role(
         audit_gate_failures=tuple(audit_failures),
         telemetry_rows=int(len(telemetry)),
         decision_rows=int(len(decisions)),
+        unique_completed_event_count=int(len(unique_completed_events)),
+        broker_event_disposition_coverage_ratio=(
+            broker_event_disposition_coverage_ratio
+        ),
+        completed_event_coverage_ratio=completed_event_coverage_ratio,
+        missing_completed_event_decision_count=int(len(missing_completed_events)),
+        model_prediction_count=model_prediction_count,
+        model_unavailable_event_count=model_unavailable_event_count,
+        model_prediction_coverage_ratio=model_prediction_coverage_ratio,
+        model_availability_status=model_availability_status,
+        model_prediction_endpoint_mismatch_count=(
+            prediction_endpoint_mismatch_count
+        ),
+        contiguity_warmup_event_count=contiguity_warmup_event_count,
+        model_unavailable_exposure_after_disposition_count=(
+            model_unavailable_exposure_after_disposition_count
+        ),
+        maximum_gap_control_processing_delay_seconds=(
+            maximum_gap_control_processing_delay_seconds
+        ),
+        maximum_completed_to_decision_lag_minutes=(
+            maximum_completed_to_decision_lag
+        ),
+        stale_completed_event_count=stale_completed_event_count,
+        gap_decision_count=gap_decision_count,
         order_event_rows=int(len(order_events)),
+        control_execution_count=int(control_trigger_mask.sum()),
+        strategy_execution_missing_decision_link_count=(
+            strategy_execution_missing_decision_link_count
+        ),
+        invalid_control_execution_link_count=(
+            invalid_control_execution_link_count
+        ),
+        unknown_execution_trigger_count=unknown_execution_trigger_count,
+        maximum_broker_order_time_alignment_seconds=(
+            maximum_broker_order_time_alignment_seconds
+        ),
         broker_deal_rows=int(len(deals)),
         broker_order_rows=int(len(orders)),
         runtime_event_rows=int(len(runtime_events)),

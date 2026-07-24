@@ -33,6 +33,8 @@ def write_role(root: Path, role: str, equity: list[float]) -> None:
                 "UNINITIALISED",
                 *["PASS_STATE_MATCHES_BROKER"] * (len(equity) - 1),
             ],
+            "latest_completed_event_time_utc": times,
+            "latest_decision_event_time_utc": times,
         }
     ).to_csv(role_root / "telemetry.csv", index=False)
     pd.DataFrame(
@@ -90,6 +92,8 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
                 "PASS_STATE_MATCHES_BROKER",
                 "CLEAN_STOP_FLAT_CONFIRMED",
             ],
+            "latest_completed_event_time_utc": [times[0], times[0], times[-1]],
+            "latest_decision_event_time_utc": [times[0], times[0], times[-1]],
         }
     ).to_csv(role_root / "telemetry.csv", index=False)
     pd.DataFrame(
@@ -102,6 +106,8 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
     pd.DataFrame(
         {
             "execution_id": ["e-entry", "e-exit"],
+            "decision_id": ["d-entry", "d-exit"],
+            "trigger_type": ["STRATEGY_DECISION", "STRATEGY_DECISION"],
             "completed_utc": [times[0], times[-1]],
             "order_send_passed": [True, True],
             "order_ticket": [101, 102],
@@ -133,7 +139,8 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
         {
             "history_key": [f"order:{ticket}" for ticket in order_tickets],
             "ticket": order_tickets,
-            "time_done_utc": [times[-1]] * len(order_tickets),
+            "time_done_utc": [times[0], times[-1]]
+            + ([times[-1]] if include_unlinked_order else []),
         }
     ).to_csv(role_root / "broker_orders.csv", index=False)
     pd.DataFrame(
@@ -241,3 +248,201 @@ def test_successful_order_without_fill_price_fails_audit_gate(
     assert summary.formal_audit_gate is False
     assert summary.successful_order_missing_fill_price_count == 2
     assert "successful_orders_missing_fill_price=2" in summary.audit_gate_failures
+
+
+def test_completed_broker_events_without_decisions_fail_gate(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    telemetry_path = role_root / "telemetry.csv"
+    telemetry = pd.read_csv(telemetry_path)
+    telemetry.loc[1, "latest_completed_event_time_utc"] = (
+        "2026-07-24T00:00:30+00:00"
+    )
+    telemetry.loc[1, "latest_decision_event_time_utc"] = (
+        "2026-07-24T00:00:00+00:00"
+    )
+    telemetry.to_csv(telemetry_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.missing_completed_event_decision_count == 1
+    assert summary.completed_event_coverage_ratio == 2 / 3
+    assert (
+        "missing_completed_event_dispositions=1"
+        in summary.audit_gate_failures
+    )
+
+
+def test_control_execution_does_not_require_strategy_decision_link(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    events_path = role_root / "order_events.csv"
+    events = pd.read_csv(events_path)
+    events.loc[1, "trigger_type"] = "CONTROL_CLEAN_STOP"
+    events.loc[1, "decision_id"] = "CONTROL_CLEAN_STOP:model_a:run-1:3"
+    events.to_csv(events_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is True
+    assert summary.control_execution_count == 1
+    assert summary.strategy_execution_missing_decision_link_count == 0
+    assert summary.invalid_control_execution_link_count == 0
+
+
+def test_model_availability_is_reported_separately_from_disposition_coverage(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions["model_prediction_available"] = [True, False]
+    decisions["model_prediction_event_time_utc"] = [
+        decisions.loc[0, "event_time_utc"],
+        decisions.loc[0, "event_time_utc"],
+    ]
+    decisions["stale_event_warning"] = [False, True]
+    decisions["action"] = [
+        "ENTER_LONG",
+        "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
+    ]
+    decisions["target_position"] = [1, 0]
+    decisions["broker_position_after_inspection"] = [1, 0]
+    decisions["decision_utc"] = [
+        "2026-07-24T00:15:01+00:00",
+        "2026-07-24T00:16:01+00:00",
+    ]
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is True
+    assert summary.broker_event_disposition_coverage_ratio == 1.0
+    assert summary.model_prediction_count == 1
+    assert summary.model_unavailable_event_count == 1
+    assert summary.model_prediction_coverage_ratio == 0.5
+    assert summary.model_availability_status == "LIMITED"
+    assert summary.contiguity_warmup_event_count == 1
+    assert summary.model_unavailable_exposure_after_disposition_count == 0
+
+
+def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    role_root.mkdir(parents=True)
+
+    events = pd.date_range(
+        "2026-07-23T16:00:00Z",
+        periods=78,
+        freq="15min",
+        tz="UTC",
+    )
+    snapshots = events + pd.Timedelta(minutes=15, seconds=1)
+    pd.DataFrame(
+        {
+            "snapshot_id": [f"s:{index}" for index in range(78)],
+            "snapshot_utc": snapshots,
+            "snapshot_phase": ["STARTUP"] + ["POLL"] * 76 + ["FINAL"],
+            "run_id": ["run-1"] * 78,
+            "worker_pid": [100] * 78,
+            "terminal_connected": [True] * 78,
+            "balance": [10000.0] * 78,
+            "equity": [10000.0] * 78,
+            "spread_points": [20.0] * 78,
+            "broker_position": [0] * 78,
+            "pending_order_count": [0] * 78,
+            "reconciliation_status": [
+                "UNINITIALISED",
+                *["PASS_STATE_MATCHES_BROKER"] * 76,
+                "CLEAN_STOP_FLAT_CONFIRMED",
+            ],
+            "latest_completed_event_time_utc": events,
+            "latest_decision_event_time_utc": events,
+        }
+    ).to_csv(role_root / "telemetry.csv", index=False)
+
+    prediction_available = [True] * 31 + [False] * 47
+    pd.DataFrame(
+        {
+            "decision_id": [f"d:{index}" for index in range(78)],
+            "event_time_utc": events,
+            "decision_utc": snapshots,
+            "model_prediction_available": prediction_available,
+            "model_prediction_event_time_utc": [
+                event if available else events[30]
+                for event, available in zip(
+                    events, prediction_available, strict=True
+                )
+            ],
+            "probability_up": [0.51] * 31 + [None] * 47,
+            "stale_event_warning": [False] * 31 + [True] * 47,
+            "action": (
+                ["HOLD_FLAT"] * 31
+                + ["CONTROL_GAP_BLOCK"]
+                + ["MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"] * 46
+            ),
+            "target_position": [0] * 78,
+            "broker_position_after_inspection": [0] * 78,
+        }
+    ).to_csv(role_root / "decisions.csv", index=False)
+
+    (role_root / "final_report.json").write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "formal_gate": True,
+                "state": {
+                    "records_written": 78,
+                    "order_send_calls": 0,
+                    "successful_order_sends": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=900,
+    )
+
+    assert summary.formal_audit_gate is True
+    assert summary.unique_completed_event_count == 78
+    assert summary.broker_event_disposition_coverage_ratio == 1.0
+    assert summary.model_prediction_count == 31
+    assert summary.model_unavailable_event_count == 47
+    assert summary.model_prediction_coverage_ratio == 31 / 78
+    assert summary.model_availability_status == "LIMITED"
+    assert summary.gap_decision_count == 1
+    assert summary.contiguity_warmup_event_count == 46
+    assert summary.model_unavailable_exposure_after_disposition_count == 0
+    assert summary.maximum_gap_control_processing_delay_seconds == 1.0

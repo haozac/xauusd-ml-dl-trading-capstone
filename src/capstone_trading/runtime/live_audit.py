@@ -8,7 +8,7 @@ offline after the observation window.
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 import csv
@@ -52,6 +52,8 @@ TELEMETRY_FIELDS: tuple[str, ...] = (
 DECISION_FIELDS: tuple[str, ...] = (
     "schema_version", "decision_id", "role", "run_id", "iteration",
     "event_time_utc", "decision_utc", "execution_mode", "probability_up",
+    "model_prediction_available", "model_prediction_event_time_utc",
+    "model_unavailable_reason", "broker_event_disposition",
     "signal_window_start_utc", "signal_window_end_utc",
     "latest_completed_bar_time_utc", "selected_symbol",
     "model_a_signal", "model_b_from_flat_signal",
@@ -99,7 +101,7 @@ DECISION_FIELDS: tuple[str, ...] = (
 
 ORDER_EVENT_FIELDS: tuple[str, ...] = (
     "schema_version", "execution_id", "decision_id", "role", "run_id",
-    "event_time_utc", "completed_utc", "leg_index", "purpose", "side",
+    "trigger_type", "event_time_utc", "completed_utc", "leg_index", "purpose", "side",
     "position_before", "position_after", "requested_volume",
     "requested_price", "bid_before", "ask_before", "spread_points_before",
     "symbol_reported_spread_points_before", "symbol_point", "order_check_passed", "order_check_retcode",
@@ -227,7 +229,21 @@ def append_unique_rows(
     return appended
 
 
-def iso_from_epoch(seconds: Any = None, milliseconds: Any = None) -> str | None:
+def iso_from_epoch(
+    seconds: Any = None,
+    milliseconds: Any = None,
+    *,
+    server_time_offset_hours: int = 0,
+) -> str | None:
+    """Convert an MT5 epoch-like value into canonical UTC.
+
+    Dukascopy MT5 exposes bar, tick, position, order, and deal timestamps using
+    its broker-server clock while the Python package presents the raw numeric
+    value as an epoch.  The raw number is retained elsewhere in every audit
+    row; this helper only corrects derived ``*_utc`` labels by subtracting the
+    frozen broker-server offset.
+    """
+
     try:
         if milliseconds not in (None, ""):
             value = float(milliseconds) / 1000.0
@@ -235,7 +251,10 @@ def iso_from_epoch(seconds: Any = None, milliseconds: Any = None) -> str | None:
             value = float(seconds)
         else:
             return None
-        return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+        converted = datetime.fromtimestamp(value, tz=timezone.utc) - timedelta(
+            hours=int(server_time_offset_hours)
+        )
+        return converted.isoformat()
     except (TypeError, ValueError, OSError, OverflowError):
         return None
 
@@ -252,14 +271,25 @@ def history_key(kind: str, row: Mapping[str, Any]) -> str:
     return f"{kind}:{identity if identity not in (None, '') else json.dumps(fallback, default=str)}"
 
 
-def broker_deal_row(*, row: Mapping[str, Any], role: str, run_id: str, captured_utc: str) -> dict[str, Any]:
+def broker_deal_row(
+    *,
+    row: Mapping[str, Any],
+    role: str,
+    run_id: str,
+    captured_utc: str,
+    server_time_offset_hours: int = 0,
+) -> dict[str, Any]:
     return {
         "schema_version": "1.0", "history_key": history_key("deal", row),
         "captured_utc": captured_utc, "role": role, "run_id": run_id,
         "ticket": row.get("ticket") or row.get("deal"), "order": row.get("order"),
         "position_id": row.get("position_id"), "time": row.get("time"),
         "time_msc": row.get("time_msc"),
-        "time_utc": iso_from_epoch(row.get("time"), row.get("time_msc")),
+        "time_utc": iso_from_epoch(
+            row.get("time"),
+            row.get("time_msc"),
+            server_time_offset_hours=server_time_offset_hours,
+        ),
         "symbol": row.get("symbol"), "type": row.get("type"),
         "entry": row.get("entry"), "reason": row.get("reason"),
         "magic": row.get("magic"), "volume": row.get("volume"),
@@ -270,16 +300,31 @@ def broker_deal_row(*, row: Mapping[str, Any], role: str, run_id: str, captured_
     }
 
 
-def broker_order_row(*, row: Mapping[str, Any], role: str, run_id: str, captured_utc: str) -> dict[str, Any]:
+def broker_order_row(
+    *,
+    row: Mapping[str, Any],
+    role: str,
+    run_id: str,
+    captured_utc: str,
+    server_time_offset_hours: int = 0,
+) -> dict[str, Any]:
     return {
         "schema_version": "1.0", "history_key": history_key("order", row),
         "captured_utc": captured_utc, "role": role, "run_id": run_id,
         "ticket": row.get("ticket") or row.get("order"),
         "position_id": row.get("position_id"), "position_by_id": row.get("position_by_id"),
         "time_setup": row.get("time_setup"), "time_setup_msc": row.get("time_setup_msc"),
-        "time_setup_utc": iso_from_epoch(row.get("time_setup"), row.get("time_setup_msc")),
+        "time_setup_utc": iso_from_epoch(
+            row.get("time_setup"),
+            row.get("time_setup_msc"),
+            server_time_offset_hours=server_time_offset_hours,
+        ),
         "time_done": row.get("time_done"), "time_done_msc": row.get("time_done_msc"),
-        "time_done_utc": iso_from_epoch(row.get("time_done"), row.get("time_done_msc")),
+        "time_done_utc": iso_from_epoch(
+            row.get("time_done"),
+            row.get("time_done_msc"),
+            server_time_offset_hours=server_time_offset_hours,
+        ),
         "symbol": row.get("symbol"), "type": row.get("type"), "state": row.get("state"),
         "reason": row.get("reason"), "magic": row.get("magic"),
         "volume_initial": row.get("volume_initial"), "volume_current": row.get("volume_current"),
@@ -374,6 +419,7 @@ def telemetry_audit_row(
     broker_inspection: Any,
     stop_file_exists: bool,
     kill_switch_file_exists: bool,
+    server_time_offset_hours: int = 0,
 ) -> dict[str, Any]:
     captured = datetime.now(timezone.utc)
     latest_event = None
@@ -426,7 +472,11 @@ def telemetry_audit_row(
         "seconds_since_latest_completed_event": (
             None if latest_event is None else (captured - latest_event).total_seconds()
         ),
-        "tick_time_utc": iso_from_epoch(tick.get("time"), tick.get("time_msc")),
+        "tick_time_utc": iso_from_epoch(
+            tick.get("time"),
+            tick.get("time_msc"),
+            server_time_offset_hours=server_time_offset_hours,
+        ),
         "tick_time_msc": tick.get("time_msc"),
         "bid": tick.get("bid"),
         "ask": tick.get("ask"),
@@ -447,7 +497,9 @@ def telemetry_audit_row(
         "position_side": position.get("type"),
         "position_volume": position.get("volume"),
         "position_open_time_utc": iso_from_epoch(
-            position.get("time"), position.get("time_msc")
+            position.get("time"),
+            position.get("time_msc"),
+            server_time_offset_hours=server_time_offset_hours,
         ),
         "position_open_price": position.get("price_open"),
         "position_current_price": position.get("price_current"),
@@ -513,6 +565,38 @@ def decision_audit_row(
         if broker_after.positions_raw
         else {}
     )
+    model_prediction_event_time = signal_context.get("event_time_utc")
+
+    def _normalised_event_time(value: Any) -> datetime | None:
+        if value in (None, ""):
+            return None
+        try:
+            parsed = datetime.fromisoformat(
+                str(value).replace("Z", "+00:00")
+            )
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    model_prediction_available = bool(
+        decision.probability_up is not None
+        and not decision.stale_event_warning
+        and _normalised_event_time(model_prediction_event_time)
+        == _normalised_event_time(decision.event_time_utc)
+    )
+    model_unavailable_reason = (
+        None
+        if model_prediction_available
+        else (
+            decision.reason
+            if decision.stale_event_warning
+            or decision.action.startswith("MODEL_UNAVAILABLE")
+            or decision.action.startswith("CONTROL_MODEL_UNAVAILABLE")
+            else None
+        )
+    )
     return {
         "schema_version": "1.0",
         "decision_id": decision_identifier(
@@ -527,19 +611,39 @@ def decision_audit_row(
         "event_time_utc": decision.event_time_utc,
         "decision_utc": decision.decision_utc,
         "execution_mode": decision.execution_mode,
-        "probability_up": decision.probability_up,
+        "probability_up": (
+            decision.probability_up if model_prediction_available else None
+        ),
+        "model_prediction_available": model_prediction_available,
+        "model_prediction_event_time_utc": model_prediction_event_time,
+        "model_unavailable_reason": model_unavailable_reason,
+        "broker_event_disposition": decision.action,
         "signal_window_start_utc": signal_context.get("window_start_utc"),
         "signal_window_end_utc": signal_context.get("window_end_utc"),
         "latest_completed_bar_time_utc": signal_context.get(
             "latest_completed_bar_time_utc"
         ),
         "selected_symbol": signal_context.get("selected_symbol"),
-        "model_a_signal": signal_context.get("model_a_signal"),
-        "model_b_from_flat_signal": signal_context.get(
-            "model_b_from_flat_signal"
+        "model_a_signal": (
+            signal_context.get("model_a_signal")
+            if model_prediction_available
+            else None
         ),
-        "model_b_hold_condition": signal_context.get("model_b_hold_condition"),
-        "model_b_entry_condition": signal_context.get("model_b_entry_condition"),
+        "model_b_from_flat_signal": (
+            signal_context.get("model_b_from_flat_signal")
+            if model_prediction_available
+            else None
+        ),
+        "model_b_hold_condition": (
+            signal_context.get("model_b_hold_condition")
+            if model_prediction_available
+            else None
+        ),
+        "model_b_entry_condition": (
+            signal_context.get("model_b_entry_condition")
+            if model_prediction_available
+            else None
+        ),
         "sequence_length": signal_context.get("sequence_length"),
         "feature_count": signal_context.get("feature_count"),
         "valid_sequence_count": signal_context.get("valid_sequence_count"),
@@ -653,12 +757,41 @@ def decision_audit_row(
 
 def execution_audit_rows(*, execution: Any, decision: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    decision_id = decision_identifier(
-        decision.role,
-        decision.event_time_utc,
-        run_id=decision.run_id,
-        iteration=getattr(decision, "iteration", None),
+    action = str(getattr(decision, "action", "")).strip().upper()
+    inferred_control_type = (
+        action
+        if action.startswith("CONTROL_")
+        else (
+            "CONTROL_SESSION_GAP_LOCKOUT"
+            if action == "SESSION_GAP_LOCKOUT_FLATTEN"
+            else None
+        )
     )
+    trigger_type = str(
+        getattr(
+            decision,
+            "audit_trigger_type",
+            inferred_control_type or "STRATEGY_DECISION",
+        )
+    ).strip().upper()
+    explicit_trigger_id = getattr(decision, "audit_trigger_id", None)
+    if explicit_trigger_id:
+        decision_id = str(explicit_trigger_id)
+    elif trigger_type.startswith("CONTROL_"):
+        event_token = str(decision.event_time_utc or "NO_EVENT").replace(
+            ":", ""
+        )
+        decision_id = (
+            f"{trigger_type}:{decision.role}:{decision.run_id}:"
+            f"{getattr(decision, 'iteration', 0)}:{event_token}"
+        )
+    else:
+        decision_id = decision_identifier(
+            decision.role,
+            decision.event_time_utc,
+            run_id=decision.run_id,
+            iteration=getattr(decision, "iteration", None),
+        )
     for index, leg in enumerate(execution.legs, start=1):
         order_event = dict(leg.order_event)
         request = dict(order_event.get("request") or {})
@@ -668,7 +801,8 @@ def execution_audit_rows(*, execution: Any, decision: Any) -> list[dict[str, Any
         rows.append({
             "schema_version": "1.0", "execution_id": execution_id,
             "decision_id": decision_id, "role": decision.role,
-            "run_id": decision.run_id, "event_time_utc": decision.event_time_utc,
+            "run_id": decision.run_id, "trigger_type": trigger_type,
+            "event_time_utc": decision.event_time_utc,
             "completed_utc": leg.completed_utc, "leg_index": index,
             "purpose": leg.purpose, "side": leg.side,
             "position_before": leg.position_before, "position_after": leg.position_after,

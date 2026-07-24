@@ -240,6 +240,42 @@ def parse_event_time(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def session_gap_lockout_status(
+    now_utc: datetime,
+    *,
+    enabled: bool,
+    start_utc_minutes: int,
+    daily_end_utc_minutes: int,
+    weekend_end_utc_minutes: int,
+) -> tuple[bool, str]:
+    """Return the frozen pilot lockout around expected XAUUSD session gaps.
+
+    The observed Dukascopy summer session has a daily non-trading interval
+    between approximately 21:00 and 22:00 UTC.  The lockout begins at 20:30 UTC
+    so an existing position can be flattened while the market is still open.
+    Friday's lockout continues through Saturday and Sunday until the configured
+    reopening time.
+    """
+
+    if not enabled:
+        return False, "session_gap_lockout_disabled"
+    current = now_utc.astimezone(timezone.utc)
+    minute_of_day = current.hour * 60 + current.minute
+    weekday = current.weekday()  # Monday=0, Friday=4, Sunday=6.
+
+    if weekday == 5:
+        return True, "weekend_market_lockout_saturday"
+    if weekday == 6 and minute_of_day < weekend_end_utc_minutes:
+        return True, "weekend_market_lockout_before_sunday_reopen"
+    if weekday == 4 and minute_of_day >= start_utc_minutes:
+        return True, "weekend_market_lockout_friday_preclose"
+    if weekday in {0, 1, 2, 3} and (
+        start_utc_minutes <= minute_of_day < daily_end_utc_minutes
+    ):
+        return True, "daily_market_break_lockout"
+    return False, "market_session_open"
+
+
 def mask_login(value: Any) -> str:
     text = str(value or "").strip()
     return "*" * max(len(text) - 4, 0) + text[-4:]
@@ -752,6 +788,8 @@ def decide_strategy_transition(
     stale_event_warning: bool,
     reconciliation_blocked: bool,
     reconciliation_reason: str = "",
+    session_gap_lockout_active: bool = False,
+    session_gap_lockout_reason: str = "expected_broker_session_gap_lockout",
 ) -> StrategyDecision:
     """Apply frozen strategy and safety rules to one completed M15 event.
 
@@ -842,7 +880,7 @@ def decide_strategy_transition(
             gap=gap,
             stale=stale_event_warning,
         )
-    if event is None or probability_up is None:
+    if session_gap_lockout_active:
         return _decision(
             state=state,
             rules=rules,
@@ -850,10 +888,33 @@ def decide_strategy_transition(
             iteration=iteration,
             event_time_utc=event_time_utc,
             probability_up=probability_up,
+            desired=0,
+            target=0,
+            action=(
+                "SESSION_GAP_LOCKOUT_FLATTEN"
+                if current != 0
+                else "BLOCK_SESSION_GAP_LOCKOUT"
+            ),
+            reason=session_gap_lockout_reason,
+            # A position-reducing control must run even if the latest completed
+            # bar is unchanged.  Once flat, repeated 30-second polls are safely
+            # treated as duplicates and are not appended to decisions.csv.
+            duplicate=(duplicate and current == 0),
+            gap=gap,
+            stale=stale_event_warning,
+        )
+    if event is None:
+        return _decision(
+            state=state,
+            rules=rules,
+            run_id=run_id,
+            iteration=iteration,
+            event_time_utc=event_time_utc,
+            probability_up=None,
             desired=current,
             target=current,
             action="BLOCK_INVALID_SIGNAL",
-            reason="missing_event_time_or_probability",
+            reason="missing_completed_broker_event_time",
             duplicate=False,
             gap=gap,
             stale=stale_event_warning,
@@ -881,11 +942,15 @@ def decide_strategy_transition(
             run_id=run_id,
             iteration=iteration,
             event_time_utc=event_time_utc,
-            probability_up=probability_up,
+            probability_up=None,
             desired=0,
             target=0,
-            action="GAP_FLATTEN" if current != 0 else "GAP_BLOCK",
-            reason="non_contiguous_completed_m15_event",
+            action=(
+                "CONTROL_GAP_FLATTEN"
+                if current != 0
+                else "CONTROL_GAP_BLOCK"
+            ),
+            reason="non_contiguous_completed_m15_broker_event",
             duplicate=False,
             gap=True,
             stale=stale_event_warning,
@@ -897,14 +962,34 @@ def decide_strategy_transition(
             run_id=run_id,
             iteration=iteration,
             event_time_utc=event_time_utc,
-            probability_up=probability_up,
-            desired=current,
-            target=current,
-            action="BLOCK_STALE_EVENT",
-            reason="latest_valid_sequence_not_aligned_to_latest_completed_bar",
+            probability_up=None,
+            desired=0,
+            target=0,
+            action=(
+                "CONTROL_MODEL_UNAVAILABLE_FLATTEN"
+                if current != 0
+                else "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"
+            ),
+            reason="frozen_48_bar_contiguous_sequence_unavailable",
             duplicate=False,
             gap=False,
             stale=True,
+        )
+    if probability_up is None:
+        return _decision(
+            state=state,
+            rules=rules,
+            run_id=run_id,
+            iteration=iteration,
+            event_time_utc=event_time_utc,
+            probability_up=None,
+            desired=current,
+            target=current,
+            action="BLOCK_INVALID_SIGNAL",
+            reason="missing_current_model_probability",
+            duplicate=False,
+            gap=False,
+            stale=False,
         )
 
     desired = desired_position_from_probability(
@@ -1104,7 +1189,7 @@ def apply_transition(
         raise DualLiveStateError("Model B cannot confirm a short position")
     previous = int(state.virtual_position)
     target = int(confirmed_position)
-    forced_gap = decision.action == "GAP_FLATTEN"
+    forced_gap = decision.action == "CONTROL_GAP_FLATTEN"
     if target == 0:
         next_hold = 0
         if previous == 0:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -13,6 +14,7 @@ from capstone_trading.runtime.dual_live_state import (
     decide_strategy_transition,
     initial_state,
     reconcile_state,
+    session_gap_lockout_status,
     update_risk_state,
     write_state,
     load_state,
@@ -170,7 +172,7 @@ def test_gap_forces_flat_and_gap_exit_does_not_start_cooldown() -> None:
         confirmed_position=0,
         broker_ticket=None,
     )
-    assert decision.action == "GAP_FLATTEN"
+    assert decision.action == "CONTROL_GAP_FLATTEN"
     assert after.virtual_position == 0
     assert after.flat_bars_since_exit == 1_000_000_000
 
@@ -404,3 +406,196 @@ def test_model_a_daily_cap_converts_reversal_to_close_only() -> None:
     assert decision.target_position == 0
     assert decision.close_only_reversal is True
     assert decision.entry_blocked_by_policy_cap is True
+
+
+def test_gap_warmup_uses_market_event_clock_and_stays_flat() -> None:
+    """A stale model sequence must not hide new completed broker bars."""
+
+    rules = model_a_rules()
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        virtual_position=-1,
+        broker_position=-1,
+        hold_bars=8,
+        last_event_time_utc="2026-07-23T20:45:00+00:00",
+    )
+
+    first_post_gap = decide_strategy_transition(
+        state,
+        rules=rules,
+        run_id="weekend-test",
+        iteration=1,
+        event_time_utc="2026-07-23T22:00:00+00:00",
+        probability_up=0.40,
+        stale_event_warning=True,
+        reconciliation_blocked=False,
+    )
+    assert first_post_gap.action == "CONTROL_GAP_FLATTEN"
+    assert first_post_gap.target_position == 0
+    assert first_post_gap.gap_from_previous_event is True
+
+    after_flatten = apply_transition(
+        state,
+        first_post_gap,
+        confirmed_position=0,
+        broker_ticket=None,
+    )
+    assert after_flatten.last_event_time_utc == "2026-07-23T22:00:00+00:00"
+    assert after_flatten.virtual_position == 0
+
+    next_warmup_bar = decide_strategy_transition(
+        after_flatten,
+        rules=rules,
+        run_id="weekend-test",
+        iteration=2,
+        event_time_utc="2026-07-23T22:15:00+00:00",
+        probability_up=0.40,
+        stale_event_warning=True,
+        reconciliation_blocked=False,
+    )
+    assert (
+        next_warmup_bar.action
+        == "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"
+    )
+    assert next_warmup_bar.probability_up is None
+    assert next_warmup_bar.target_position == 0
+
+    after_warmup = apply_transition(
+        after_flatten,
+        next_warmup_bar,
+        confirmed_position=0,
+        broker_ticket=None,
+    )
+    assert after_warmup.last_event_time_utc == "2026-07-23T22:15:00+00:00"
+    assert after_warmup.virtual_position == 0
+
+
+def test_model_unavailable_warmup_never_preserves_exposure() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        virtual_position=1,
+        broker_position=1,
+        last_event_time_utc="2026-07-24T00:00:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="warmup-restart",
+        iteration=1,
+        event_time_utc="2026-07-24T00:15:00+00:00",
+        probability_up=None,
+        stale_event_warning=True,
+        reconciliation_blocked=False,
+    )
+
+    assert decision.action == "CONTROL_MODEL_UNAVAILABLE_FLATTEN"
+    assert decision.probability_up is None
+    assert decision.target_position == 0
+
+
+def test_session_gap_lockout_flattens_before_duplicate_suppression() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        virtual_position=1,
+        broker_position=1,
+        last_event_time_utc="2026-07-24T20:15:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="lockout-test",
+        iteration=1,
+        event_time_utc="2026-07-24T20:15:00+00:00",
+        probability_up=0.60,
+        stale_event_warning=False,
+        reconciliation_blocked=False,
+        session_gap_lockout_active=True,
+        session_gap_lockout_reason="weekend_market_lockout_friday_preclose",
+    )
+
+    assert decision.action == "SESSION_GAP_LOCKOUT_FLATTEN"
+    assert decision.target_position == 0
+    assert decision.duplicate_event is False
+
+
+def test_session_gap_lockout_schedule_covers_daily_break_and_weekend() -> None:
+    start = 20 * 60 + 30
+    daily_reopen = 22 * 60
+    weekend_reopen = 21 * 60
+
+    friday_preclose = session_gap_lockout_status(
+        datetime(2026, 7, 24, 20, 30, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+    saturday = session_gap_lockout_status(
+        datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+    sunday_before_open = session_gap_lockout_status(
+        datetime(2026, 7, 26, 20, 59, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+    sunday_open = session_gap_lockout_status(
+        datetime(2026, 7, 26, 21, 0, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+    monday_break = session_gap_lockout_status(
+        datetime(2026, 7, 27, 20, 45, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+    monday_open = session_gap_lockout_status(
+        datetime(2026, 7, 27, 10, 0, tzinfo=timezone.utc),
+        enabled=True,
+        start_utc_minutes=start,
+        daily_end_utc_minutes=daily_reopen,
+        weekend_end_utc_minutes=weekend_reopen,
+    )
+
+    assert friday_preclose[0] is True
+    assert saturday[0] is True
+    assert sunday_before_open[0] is True
+    assert sunday_open == (False, "market_session_open")
+    assert monday_break[0] is True
+    assert monday_open == (False, "market_session_open")
+
+
+def test_worker_transition_uses_latest_completed_event_clock() -> None:
+    import ast
+    from pathlib import Path
+
+    worker_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "capstone_trading"
+        / "runtime"
+        / "dual_live_worker.py"
+    )
+    tree = ast.parse(worker_path.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "decide_strategy_transition"
+    ]
+    assert len(calls) == 1
+    event_keyword = next(
+        keyword for keyword in calls[0].keywords if keyword.arg == "event_time_utc"
+    )
+    assert isinstance(event_keyword.value, ast.Name)
+    assert event_keyword.value.id == "latest_completed_event_time"

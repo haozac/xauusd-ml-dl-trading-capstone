@@ -15,6 +15,17 @@ runtime:
   flatten_on_clean_stop: true
   allow_onednn: false
 
+# Operational safety overlay for the observed Dukascopy XAUUSD summer session.
+# The worker flattens before the expected daily break while the market is still
+# open, blocks new exposure during the break/weekend, and resumes bar processing
+# after the configured reopening time.  Model inference still requires a fresh
+# contiguous 48-bar sequence after a gap.
+market_session_safety:
+  enabled: true
+  pre_break_flatten_utc: "20:30"
+  daily_reopen_utc: "22:00"
+  weekend_reopen_utc: "21:00"
+
 supervisor:
   poll_seconds: 10
   stale_heartbeat_seconds: 180
