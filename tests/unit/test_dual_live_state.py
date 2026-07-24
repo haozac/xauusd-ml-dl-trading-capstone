@@ -521,7 +521,7 @@ def test_session_gap_lockout_flattens_before_duplicate_suppression() -> None:
 def test_session_gap_lockout_schedule_covers_daily_break_and_weekend() -> None:
     start = 20 * 60 + 30
     daily_reopen = 22 * 60
-    weekend_reopen = 21 * 60
+    weekend_reopen = 22 * 60
 
     friday_preclose = session_gap_lockout_status(
         datetime(2026, 7, 24, 20, 30, tzinfo=timezone.utc),

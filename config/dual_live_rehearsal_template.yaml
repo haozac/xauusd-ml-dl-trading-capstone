@@ -24,7 +24,7 @@ market_session_safety:
   enabled: true
   pre_break_flatten_utc: "20:30"
   daily_reopen_utc: "22:00"
-  weekend_reopen_utc: "21:00"
+  weekend_reopen_utc: "22:00"
 
 supervisor:
   poll_seconds: 10

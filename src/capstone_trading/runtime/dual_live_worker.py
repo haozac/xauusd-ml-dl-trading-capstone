@@ -151,7 +151,7 @@ class WorkerSettings:
     session_gap_lockout_enabled: bool = True
     session_gap_lockout_start_utc_minutes: int = 20 * 60 + 30
     session_gap_lockout_daily_end_utc_minutes: int = 22 * 60
-    session_gap_lockout_weekend_end_utc_minutes: int = 21 * 60
+    session_gap_lockout_weekend_end_utc_minutes: int = 22 * 60
     allow_onednn: bool = False
 
 
@@ -259,7 +259,7 @@ def load_worker_settings(
         field_name="market_session_safety.daily_reopen_utc",
     )
     weekend_lockout_end = _parse_utc_hhmm(
-        market_session_safety.get("weekend_reopen_utc", "21:00"),
+        market_session_safety.get("weekend_reopen_utc", "22:00"),
         field_name="market_session_safety.weekend_reopen_utc",
     )
     if lockout_start >= lockout_end:
