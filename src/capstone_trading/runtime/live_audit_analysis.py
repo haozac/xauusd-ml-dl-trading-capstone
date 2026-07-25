@@ -15,6 +15,12 @@ import math
 
 import pandas as pd
 
+from capstone_trading.runtime.live_audit import (
+    completed_broker_event_identifier,
+    decision_identifier,
+    historical_backfill_identifier,
+)
+
 
 class LiveAuditAnalysisError(RuntimeError):
     """Raised when raw observation evidence is missing or malformed."""
@@ -237,7 +243,7 @@ def _daily_equity_returns(telemetry: pd.DataFrame) -> pd.Series:
     _require_columns(telemetry, ("snapshot_utc", "equity"), source="telemetry.csv")
     frame = telemetry.loc[:, ["snapshot_utc", "equity"]].copy()
     frame["snapshot_utc"] = pd.to_datetime(
-        frame["snapshot_utc"], utc=True, errors="coerce"
+        frame["snapshot_utc"], utc=True, errors="coerce", format="mixed"
     )
     frame["equity"] = pd.to_numeric(frame["equity"], errors="coerce")
     frame = frame.dropna(subset=["snapshot_utc", "equity"]).sort_values(
@@ -502,9 +508,11 @@ def _same_event_disposition_counts(
 
 
 _CURRENT_DECISION_SCHEMA_VERSION = "1.0"
+_CURRENT_AUDIT_SCHEMA_VERSION = "1.0"
 _VALID_DECISION_ROLES = frozenset({"model_a", "model_b"})
 _VALID_EXECUTION_MODES = frozenset({"live", "shadow"})
 _VALID_POSITIONS = frozenset({-1, 0, 1})
+_M15_DELTA = pd.Timedelta(minutes=15)
 _REQUIRED_DECISION_EVIDENCE_COLUMNS = (
     "schema_version",
     "decision_id",
@@ -514,8 +522,16 @@ _REQUIRED_DECISION_EVIDENCE_COLUMNS = (
     "event_time_utc",
     "decision_utc",
     "execution_mode",
+    "probability_up",
+    "model_prediction_available",
+    "model_prediction_event_time_utc",
+    "model_unavailable_reason",
     "broker_event_disposition",
+    "latest_completed_bar_time_utc",
+    "event_is_latest_feature",
+    "event_is_latest_completed_bar",
     "action",
+    "reason",
     "position_before",
     "desired_position",
     "target_position",
@@ -609,6 +625,72 @@ _CONTROL_TRIGGER_BY_ACTION = {
     "DAILY_STOP_FLATTEN": "CONTROL_DAILY_STOP",
     "SESSION_GAP_LOCKOUT_FLATTEN": "CONTROL_SESSION_GAP_LOCKOUT",
 }
+_CONTROL_REASON_BY_ACTION = {
+    "KILL_SWITCH_FLATTEN": "emergency_kill_switch_active",
+    "KILL_SWITCH_BLOCK": "emergency_kill_switch_active",
+    "TOTAL_STOP_FLATTEN": "total_drawdown_stop_active",
+    "TOTAL_STOP_BLOCK": "total_drawdown_stop_active",
+    "DAILY_STOP_FLATTEN": "daily_loss_stop_active_until_next_utc_day",
+    "DAILY_STOP_BLOCK": "daily_loss_stop_active_until_next_utc_day",
+    "CONTROL_FRESH_START_FLATTEN": "fresh_runtime_first_broker_event_adopt_only",
+    "CONTROL_FRESH_START_BLOCK": "fresh_runtime_first_broker_event_adopt_only",
+    "CONTROL_GAP_FLATTEN": "non_contiguous_completed_m15_broker_event",
+    "CONTROL_GAP_BLOCK": "non_contiguous_completed_m15_broker_event",
+    "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN": (
+        "broker_and_model_completed_event_endpoints_differ"
+    ),
+    "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK": (
+        "broker_and_model_completed_event_endpoints_differ"
+    ),
+    "CONTROL_MODEL_UNAVAILABLE_FLATTEN": (
+        "frozen_48_bar_contiguous_sequence_unavailable"
+    ),
+    "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP": (
+        "frozen_48_bar_contiguous_sequence_unavailable"
+    ),
+    "BLOCK_DAILY_ENTRY_CAP": (
+        "maximum_successful_new_entries_per_utc_day_reached"
+    ),
+}
+_SESSION_GAP_REASONS = frozenset(
+    {
+        "expected_broker_session_gap_lockout",
+        "weekend_market_lockout_saturday",
+        "weekend_market_lockout_before_sunday_reopen",
+        "weekend_market_lockout_friday_preclose",
+        "daily_market_break_lockout",
+    }
+)
+_MODEL_UNAVAILABLE_ACTIONS = frozenset(
+    {
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN",
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK",
+        "CONTROL_MODEL_UNAVAILABLE_FLATTEN",
+        "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
+        "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL",
+        "CONTROL_FRESH_START_FLATTEN",
+        "CONTROL_FRESH_START_BLOCK",
+    }
+)
+_NORMAL_MODEL_ACTIONS = frozenset(
+    {
+        "ENTER_LONG",
+        "ENTER_SHORT",
+        "HOLD_FLAT",
+        "HOLD_LONG",
+        "HOLD_SHORT",
+        "EXIT_POSITION",
+        "REVERSE_LONG_TO_SHORT",
+        "REVERSE_SHORT_TO_LONG",
+        "BLOCK_MINIMUM_HOLD",
+        "BLOCK_DAILY_POLICY_CAP",
+        "CLOSE_ONLY_DAILY_POLICY_CAP",
+        "EXIT_POSITION_CAP_REACHED",
+        "BLOCK_DAILY_ENTRY_CAP",
+        "BLOCK_SPREAD",
+        "PARTIAL_REVERSAL_FLAT",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -625,10 +707,17 @@ def _audit_text(value: Any) -> str:
 
 
 def _audit_bool(value: Any) -> bool | None:
+    if isinstance(value, (bool, int, float)) and not (
+        isinstance(value, float) and math.isnan(value)
+    ):
+        if float(value) == 1.0:
+            return True
+        if float(value) == 0.0:
+            return False
     text = _audit_text(value).lower()
-    if text in {"true", "1", "yes"}:
+    if text in {"true", "1", "1.0", "yes"}:
         return True
-    if text in {"false", "0", "no"}:
+    if text in {"false", "0", "0.0", "no"}:
         return False
     return None
 
@@ -643,12 +732,30 @@ def _audit_int(value: Any) -> int | None:
     return int(number)
 
 
+def _audit_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _audit_timestamp(value: Any) -> pd.Timestamp | None:
     text = _audit_text(value)
     if not text:
         return None
     parsed = pd.to_datetime(text, utc=True, errors="coerce")
     return None if pd.isna(parsed) else pd.Timestamp(parsed)
+
+
+def _is_m15_grid_timestamp(value: pd.Timestamp) -> bool:
+    utc = value.tz_convert("UTC")
+    return bool(
+        utc.minute % 15 == 0
+        and utc.second == 0
+        and utc.microsecond == 0
+        and utc.nanosecond == 0
+    )
 
 
 def _decision_action_contract_is_valid(
@@ -727,9 +834,12 @@ def _expected_execution_trigger(action: str) -> str:
 def _validate_decision_evidence(
     decisions: pd.DataFrame,
     order_events: pd.DataFrame,
+    runtime_events: pd.DataFrame,
     *,
     role: str,
     telemetry_run_ids: set[str],
+    observation_start_utc: pd.Timestamp | None,
+    observation_end_utc: pd.Timestamp | None,
 ) -> DecisionEvidenceValidation:
     """Validate persisted decision meaning without interrupting report output.
 
@@ -754,6 +864,12 @@ def _validate_decision_evidence(
         for column in missing_columns:
             reason_counts[f"missing_required_column:{column}"] = affected
         invalid_rows.update(range(len(decisions)))
+
+    runtime_event_types = set(
+        runtime_events.get(
+            "event_type", pd.Series(dtype="object")
+        ).fillna("").astype(str).str.strip().str.upper()
+    )
 
     successful_orders = order_events.copy()
     if not successful_orders.empty:
@@ -784,6 +900,22 @@ def _validate_decision_evidence(
             errors="coerce",
             format="mixed",
         )
+        successful_orders["_completed_time"] = pd.to_datetime(
+            successful_orders.get(
+                "completed_utc",
+                pd.Series(index=successful_orders.index, dtype="object"),
+            ),
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+        successful_orders["_position_after"] = pd.to_numeric(
+            successful_orders.get(
+                "position_after",
+                pd.Series(index=successful_orders.index, dtype="float64"),
+            ),
+            errors="coerce",
+        )
 
     for offset, (_, row) in enumerate(decisions.iterrows()):
         index = int(offset)
@@ -794,9 +926,23 @@ def _validate_decision_evidence(
         iteration = _audit_int(row.get("iteration"))
         mode = _audit_text(row.get("execution_mode")).lower()
         action = _audit_text(row.get("action")).upper()
+        reason = _audit_text(row.get("reason"))
         disposition = _audit_text(row.get("broker_event_disposition")).upper()
         event_time = _audit_timestamp(row.get("event_time_utc"))
         decision_time = _audit_timestamp(row.get("decision_utc"))
+        probability_up = _audit_float(row.get("probability_up"))
+        prediction_available = _audit_bool(row.get("model_prediction_available"))
+        prediction_event_time = _audit_timestamp(
+            row.get("model_prediction_event_time_utc")
+        )
+        latest_completed_bar_time = _audit_timestamp(
+            row.get("latest_completed_bar_time_utc")
+        )
+        event_is_latest_feature = _audit_bool(row.get("event_is_latest_feature"))
+        event_is_latest_completed = _audit_bool(
+            row.get("event_is_latest_completed_bar")
+        )
+        model_unavailable_reason = _audit_text(row.get("model_unavailable_reason"))
         before = _audit_int(row.get("position_before"))
         desired = _audit_int(row.get("desired_position"))
         target = _audit_int(row.get("target_position"))
@@ -825,16 +971,59 @@ def _validate_decision_evidence(
             add(index, "invalid_execution_mode")
         if event_time is None:
             add(index, "invalid_event_time_utc")
+        elif not _is_m15_grid_timestamp(event_time):
+            add(index, "event_time_not_on_m15_grid")
         if decision_time is None:
             add(index, "invalid_decision_utc")
-        elif event_time is not None and decision_time < event_time:
-            add(index, "decision_before_event")
+        elif event_time is not None and decision_time < event_time + _M15_DELTA:
+            add(index, "decision_before_m15_completion")
+        if (
+            decision_time is not None
+            and observation_start_utc is not None
+            and decision_time < observation_start_utc
+        ):
+            add(index, "decision_before_observation_window")
+        if (
+            decision_time is not None
+            and observation_end_utc is not None
+            and decision_time > observation_end_utc
+        ):
+            add(index, "decision_after_observation_window")
+        if (
+            event_time is not None
+            and run_id
+            and iteration is not None
+            and decision_id
+        ):
+            expected_decision_id = (
+                historical_backfill_identifier(row_role, event_time.isoformat())
+                if action == _HISTORICAL_BACKFILL_ACTION
+                else decision_identifier(
+                    row_role,
+                    event_time.isoformat(),
+                    run_id=run_id,
+                    iteration=iteration,
+                )
+            )
+            if decision_id != expected_decision_id:
+                add(index, "noncanonical_decision_id")
         for column in _OPTIONAL_DECISION_TIMESTAMP_COLUMNS:
             raw = row.get(column)
             if _audit_text(raw) and _audit_timestamp(raw) is None:
                 add(index, f"invalid_optional_timestamp:{column}")
         if action not in _KNOWN_DECISION_ACTIONS:
             add(index, "unknown_action")
+        expected_reason = _CONTROL_REASON_BY_ACTION.get(action)
+        if expected_reason is not None and reason != expected_reason:
+            add(index, "invalid_action_reason")
+        if action in {
+            "SESSION_GAP_LOCKOUT_FLATTEN",
+            "BLOCK_SESSION_GAP_LOCKOUT",
+        }:
+            if reason not in _SESSION_GAP_REASONS:
+                add(index, "invalid_session_gap_reason")
+            if "SESSION_GAP_LOCKOUT_STARTED" not in runtime_event_types:
+                add(index, "session_gap_action_without_runtime_activation")
         if disposition != action:
             add(index, "broker_event_disposition_mismatch")
         if duplicate is not False:
@@ -868,6 +1057,31 @@ def _validate_decision_evidence(
         for controlled_action, flag_column in _RISK_CONTROL_FLAG_BY_ACTION.items():
             if action == controlled_action and _audit_bool(row.get(flag_column)) is not True:
                 add(index, f"inactive_control_flag:{flag_column}")
+        kill_switch_active = _audit_bool(row.get("kill_switch_active"))
+        total_stop_active = _audit_bool(row.get("total_stop_active"))
+        daily_stop_active = _audit_bool(row.get("daily_stop_active"))
+        if kill_switch_active is True and action not in {
+            "KILL_SWITCH_FLATTEN",
+            "KILL_SWITCH_BLOCK",
+        }:
+            add(index, "active_kill_switch_without_kill_action")
+        if (
+            kill_switch_active is not True
+            and total_stop_active is True
+            and action not in {"TOTAL_STOP_FLATTEN", "TOTAL_STOP_BLOCK"}
+        ):
+            add(index, "active_total_stop_without_total_action")
+        if (
+            kill_switch_active is not True
+            and total_stop_active is not True
+            and daily_stop_active is True
+            and action not in {"DAILY_STOP_FLATTEN", "DAILY_STOP_BLOCK"}
+        ):
+            add(index, "active_daily_stop_without_daily_action")
+        if action.startswith("DAILY_STOP_") and "DAILY_STOP_TRIGGERED" not in runtime_event_types:
+            add(index, "daily_stop_action_without_runtime_trigger")
+        if action.startswith("TOTAL_STOP_") and "TOTAL_STOP_TRIGGERED" not in runtime_event_types:
+            add(index, "total_stop_action_without_runtime_trigger")
         if action == "BLOCK_RECONCILIATION":
             status = _audit_text(row.get("reconciliation_status")).upper()
             if not status or status.startswith("PASS") or "FLAT_CONFIRMED" in status:
@@ -897,18 +1111,59 @@ def _validate_decision_evidence(
             for column in ("policy_cap_reached", "exit_allowed_when_capped"):
                 if _audit_bool(row.get(column)) is not True:
                     add(index, f"invalid_policy_flag:{column}")
+        if action == "BLOCK_DAILY_POLICY_CAP":
+            for column in ("policy_cap_reached", "entry_blocked_by_policy_cap"):
+                if _audit_bool(row.get(column)) is not True:
+                    add(index, f"invalid_policy_flag:{column}")
+        if action == "BLOCK_DAILY_ENTRY_CAP":
+            if _audit_bool(row.get("entry_blocked_by_policy_cap")) is not True:
+                add(index, "invalid_policy_flag:entry_blocked_by_policy_cap")
+
+        if prediction_available is None:
+            add(index, "invalid_model_prediction_available")
+        elif prediction_available:
+            if probability_up is None or not 0.0 <= probability_up <= 1.0:
+                add(index, "invalid_available_probability")
+            if prediction_event_time is None:
+                add(index, "available_prediction_missing_endpoint")
+            elif event_time is not None and prediction_event_time != event_time:
+                add(index, "available_prediction_endpoint_mismatch")
+            if latest_completed_bar_time is None:
+                add(index, "available_prediction_missing_latest_completed_bar")
+            elif event_time is not None and latest_completed_bar_time != event_time:
+                add(index, "available_latest_completed_bar_mismatch")
+            if event_is_latest_feature is not True:
+                add(index, "available_prediction_not_latest_feature")
+            if event_is_latest_completed is not True:
+                add(index, "available_prediction_not_latest_completed_bar")
+            if stale is not False:
+                add(index, "available_prediction_marked_stale")
+            if model_unavailable_reason:
+                add(index, "available_prediction_has_unavailable_reason")
+            if action in _MODEL_UNAVAILABLE_ACTIONS:
+                add(index, "unavailable_action_has_available_prediction")
+        else:
+            if _audit_text(row.get("probability_up")):
+                add(index, "unavailable_prediction_has_probability")
+            if action in _NORMAL_MODEL_ACTIONS:
+                add(index, "normal_model_action_without_prediction")
+            if action in _MODEL_UNAVAILABLE_ACTIONS and not model_unavailable_reason:
+                add(index, "unavailable_action_missing_reason")
+            if action != _HISTORICAL_BACKFILL_ACTION:
+                if latest_completed_bar_time is None:
+                    add(index, "unavailable_prediction_missing_latest_completed_bar")
+                elif event_time is not None and latest_completed_bar_time != event_time:
+                    add(index, "unavailable_latest_completed_bar_mismatch")
 
         if mode == "shadow":
             if broker_before != 0 or broker_after != 0:
                 add(index, "shadow_broker_not_flat")
-            if any(
-                value is not False
-                for value in (
-                    order_check_called,
-                    order_check_passed,
-                    order_send_called,
-                    order_send_passed,
-                )
+            if (
+                order_check_called is not False
+                or order_check_passed not in {None, False}
+                or order_send_called is not False
+                or order_send_passed not in {None, False}
+                or broker_after_execution is not None
             ):
                 add(index, "shadow_order_evidence_present_or_missing")
         elif mode == "live" and before in _VALID_POSITIONS and target in _VALID_POSITIONS:
@@ -943,13 +1198,97 @@ def _validate_decision_evidence(
                         candidates = candidates.loc[
                             candidates["_decision_id"] == decision_id
                         ]
+                    else:
+                        # Mirror execution_audit_rows exactly. Control IDs keep
+                        # the original event text and remove only colons.
+                        event_token = _audit_text(
+                            row.get("event_time_utc")
+                        ).replace(":", "")
+                        expected_control_id = (
+                            f"{expected_trigger}:{row_role}:{run_id}:"
+                            f"{iteration}:{event_token}"
+                        )
+                        candidates = candidates.loc[
+                            candidates["_decision_id"] == expected_control_id
+                        ]
                     if candidates.empty:
                         add(index, "live_transition_missing_successful_order_event")
                 else:
                     add(index, "live_transition_missing_successful_order_event")
             else:
-                if order_send_called is not False or order_send_passed is not False:
+                if (
+                    order_check_called is not False
+                    or order_check_passed not in {None, False}
+                    or order_send_called is not False
+                    or order_send_passed not in {None, False}
+                    or broker_after_execution is not None
+                ):
                     add(index, "nontransition_order_send_evidence")
+
+    continuity = decisions.copy()
+    if not continuity.empty:
+        continuity["_event_time"] = pd.to_datetime(
+            continuity.get("event_time_utc"), utc=True, errors="coerce", format="mixed"
+        )
+        continuity["_decision_time"] = pd.to_datetime(
+            continuity.get("decision_utc"), utc=True, errors="coerce", format="mixed"
+        )
+        continuity["_action"] = continuity.get(
+            "action", pd.Series("", index=continuity.index)
+        ).fillna("").astype(str).str.upper()
+        continuity = continuity.loc[
+            continuity["_action"] != _HISTORICAL_BACKFILL_ACTION
+        ].sort_values(["_event_time", "_decision_time"], kind="stable")
+        previous: pd.Series | None = None
+        for offset, (_, row) in enumerate(continuity.iterrows()):
+            if previous is not None:
+                previous_target = _audit_int(previous.get("target_position"))
+                previous_broker_after = _audit_int(
+                    previous.get("broker_position_after_inspection")
+                )
+                previous_decision_time = _audit_timestamp(
+                    previous.get("decision_utc")
+                )
+                current_decision_time = _audit_timestamp(row.get("decision_utc"))
+                if (
+                    previous_decision_time is not None
+                    and current_decision_time is not None
+                    and not successful_orders.empty
+                ):
+                    intervening_controls = successful_orders.loc[
+                        (successful_orders["_role"] == role)
+                        & successful_orders["_trigger"].str.startswith("CONTROL_")
+                        & (
+                            successful_orders["_completed_time"]
+                            >= previous_decision_time
+                        )
+                        & (
+                            successful_orders["_completed_time"]
+                            < current_decision_time
+                        )
+                        & successful_orders["_position_after"].notna()
+                    ].sort_values("_completed_time", kind="stable")
+                    if not intervening_controls.empty:
+                        controlled_position = _audit_int(
+                            intervening_controls.iloc[-1]["_position_after"]
+                        )
+                        if controlled_position in _VALID_POSITIONS:
+                            previous_target = controlled_position
+                            previous_broker_after = controlled_position
+                current_before = _audit_int(row.get("position_before"))
+                if previous_target is not None and current_before != previous_target:
+                    add(offset, "virtual_position_discontinuity")
+                previous_mode = _audit_text(previous.get("execution_mode")).lower()
+                current_mode = _audit_text(row.get("execution_mode")).lower()
+                current_broker_before = _audit_int(row.get("broker_position_before"))
+                if (
+                    previous_mode == current_mode == "live"
+                    and _audit_text(row.get("action")).upper() != "BLOCK_RECONCILIATION"
+                    and previous_broker_after is not None
+                    and current_broker_before != previous_broker_after
+                ):
+                    add(offset, "broker_position_discontinuity")
+            previous = row
 
     ordered_reasons = tuple(
         f"{reason}={count}"
@@ -960,6 +1299,216 @@ def _validate_decision_evidence(
         issue_count=int(sum(reason_counts.values())),
         reason_counts=ordered_reasons,
     )
+
+
+def _validate_evidence_ownership(
+    *,
+    role: str,
+    telemetry_run_ids: set[str],
+    telemetry: pd.DataFrame,
+    completed_broker_events: pd.DataFrame,
+    order_events: pd.DataFrame,
+    deals: pd.DataFrame,
+    orders: pd.DataFrame,
+    runtime_events: pd.DataFrame,
+    final_report: dict[str, Any],
+) -> tuple[str, ...]:
+    """Fail closed when raw files do not belong to the audited role/run set."""
+
+    issues: list[str] = []
+
+    def validate_frame(
+        frame: pd.DataFrame,
+        source: str,
+        *,
+        required: bool,
+        required_columns: tuple[str, ...] = (),
+    ) -> None:
+        if frame.empty:
+            if required:
+                issues.append(f"missing_required_evidence:{source}")
+            return
+        needed = ("schema_version", "role", "run_id", *required_columns)
+        missing = [column for column in needed if column not in frame.columns]
+        for column in missing:
+            issues.append(f"{source}:missing_column:{column}")
+        if missing:
+            return
+        invalid_schema = int(
+            (
+                frame["schema_version"].fillna("").astype(str).str.strip()
+                != _CURRENT_AUDIT_SCHEMA_VERSION
+            ).sum()
+        )
+        if invalid_schema:
+            issues.append(f"{source}:invalid_schema={invalid_schema}")
+        role_mismatch = int(
+            (
+                frame["role"].fillna("").astype(str).str.strip().str.lower()
+                != role
+            ).sum()
+        )
+        if role_mismatch:
+            issues.append(f"{source}:role_mismatch={role_mismatch}")
+        run_values = frame["run_id"].fillna("").astype(str).str.strip()
+        invalid_run = int(
+            ((run_values == "") | ~run_values.isin(telemetry_run_ids)).sum()
+        )
+        if invalid_run:
+            issues.append(f"{source}:run_id_not_in_telemetry={invalid_run}")
+
+    validate_frame(
+        telemetry,
+        "telemetry.csv",
+        required=True,
+        required_columns=(
+            "snapshot_id",
+            "snapshot_utc",
+            "latest_completed_event_time_utc",
+            "latest_decision_event_time_utc",
+        ),
+    )
+    validate_frame(
+        completed_broker_events,
+        "completed_broker_events.csv",
+        required=True,
+        required_columns=(
+            "broker_event_key",
+            "event_time_utc",
+            "first_observed_utc",
+        ),
+    )
+    validate_frame(order_events, "order_events.csv", required=False)
+    validate_frame(deals, "broker_deals.csv", required=False)
+    validate_frame(orders, "broker_orders.csv", required=False)
+    validate_frame(
+        runtime_events,
+        "runtime_events.csv",
+        required=True,
+        required_columns=("runtime_event_id", "timestamp_utc", "event_type"),
+    )
+
+    if not final_report:
+        issues.append("missing_required_evidence:final_report.json")
+    else:
+        if _audit_text(final_report.get("schema_version")) != _CURRENT_AUDIT_SCHEMA_VERSION:
+            issues.append("final_report.json:invalid_schema")
+        if _audit_text(final_report.get("role")).lower() != role:
+            issues.append("final_report.json:role_mismatch")
+        final_run_id = _audit_text(final_report.get("run_id"))
+        if not final_run_id or final_run_id not in telemetry_run_ids:
+            issues.append("final_report.json:run_id_not_in_telemetry")
+        if _audit_timestamp(final_report.get("started_utc")) is None:
+            issues.append("final_report.json:invalid_started_utc")
+        if _audit_timestamp(final_report.get("completed_utc")) is None:
+            issues.append("final_report.json:invalid_completed_utc")
+
+    if not completed_broker_events.empty and {
+        "broker_event_key",
+        "role",
+        "event_time_utc",
+    }.issubset(completed_broker_events.columns):
+        for _, row in completed_broker_events.iterrows():
+            event_time = _audit_timestamp(row.get("event_time_utc"))
+            if event_time is None:
+                issues.append("completed_broker_events.csv:invalid_event_time")
+                continue
+            if not _is_m15_grid_timestamp(event_time):
+                issues.append("completed_broker_events.csv:event_not_on_m15_grid")
+            expected_key = completed_broker_event_identifier(
+                _audit_text(row.get("role")).lower(), event_time.isoformat()
+            )
+            if _audit_text(row.get("broker_event_key")) != expected_key:
+                issues.append("completed_broker_events.csv:invalid_broker_event_key")
+            first_observed = _audit_timestamp(row.get("first_observed_utc"))
+            if first_observed is None:
+                issues.append("completed_broker_events.csv:invalid_first_observed_utc")
+            elif first_observed < event_time + _M15_DELTA:
+                issues.append(
+                    "completed_broker_events.csv:observed_before_m15_completion"
+                )
+
+    return tuple(issues)
+
+
+def _validate_telemetry_event_lag(telemetry: pd.DataFrame) -> tuple[str, ...]:
+    issues: list[str] = []
+    required = (
+        "latest_completed_event_time_utc",
+        "latest_decision_event_time_utc",
+    )
+    if any(column not in telemetry.columns for column in required):
+        return ("telemetry_event_lag_columns_missing",)
+    for _, row in telemetry.iterrows():
+        completed_text = _audit_text(row.get(required[0]))
+        decision_text = _audit_text(row.get(required[1]))
+        if not completed_text and not decision_text:
+            continue
+        if not completed_text or not decision_text:
+            if (
+                _audit_text(row.get("snapshot_phase")).upper() == "STARTUP"
+                and completed_text
+                and not decision_text
+            ):
+                # A restarted worker restores the last completed event from
+                # state before it has a current-process StrategyDecision.
+                continue
+            issues.append("telemetry_event_lag_endpoint_missing")
+            continue
+        completed = _audit_timestamp(completed_text)
+        decision = _audit_timestamp(decision_text)
+        if completed is None or decision is None:
+            issues.append("telemetry_event_lag_endpoint_invalid")
+            continue
+        if not _is_m15_grid_timestamp(completed) or not _is_m15_grid_timestamp(
+            decision
+        ):
+            issues.append("telemetry_event_lag_endpoint_not_on_m15_grid")
+        if completed < decision:
+            issues.append("telemetry_event_lag_negative")
+    return tuple(issues)
+
+
+def _validate_derived_broker_gaps(
+    completed_broker_events: pd.DataFrame,
+    decisions: pd.DataFrame,
+) -> tuple[str, ...]:
+    """Derive broker discontinuities independently of decision gap flags."""
+
+    if completed_broker_events.empty or "event_time_utc" not in completed_broker_events:
+        return ("broker_gap_validation_unavailable",)
+    ledger_times = pd.to_datetime(
+        completed_broker_events["event_time_utc"],
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    ).dropna().drop_duplicates().sort_values()
+    if len(ledger_times) < 2:
+        return ()
+    deltas = ledger_times.diff()
+    post_gap_times = set(ledger_times.loc[deltas != _M15_DELTA].iloc[1:])
+    if not post_gap_times:
+        return ()
+    decision_times = pd.to_datetime(
+        decisions.get("event_time_utc", pd.Series(dtype="object")),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    actions = decisions.get(
+        "action", pd.Series("", index=decisions.index)
+    ).fillna("").astype(str).str.upper()
+    issues: list[str] = []
+    for post_gap_time in sorted(post_gap_times):
+        matching_actions = set(actions.loc[decision_times == post_gap_time])
+        if not matching_actions.intersection(
+            {"CONTROL_GAP_FLATTEN", "CONTROL_GAP_BLOCK"}
+        ):
+            issues.append(
+                "broker_gap_missing_control:"
+                f"{pd.Timestamp(post_gap_time).isoformat()}"
+            )
+    return tuple(issues)
 
 
 def _timestamp_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -998,7 +1547,7 @@ def _trade_ledger(deals: pd.DataFrame) -> pd.DataFrame:
     for column in ("volume", "price", "profit", "commission", "swap", "fee", "type"):
         frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
     frame["time_utc"] = pd.to_datetime(
-        frame.get("time_utc"), utc=True, errors="coerce"
+        frame.get("time_utc"), utc=True, errors="coerce", format="mixed"
     )
     frame = frame.dropna(subset=["position_id"])
     if frame.empty:
@@ -1224,7 +1773,10 @@ def _daily_summary(
 ) -> pd.DataFrame:
     telemetry_work = telemetry.copy()
     telemetry_work["timestamp"] = pd.to_datetime(
-        telemetry_work["snapshot_utc"], utc=True, errors="coerce"
+        telemetry_work["snapshot_utc"],
+        utc=True,
+        errors="coerce",
+        format="mixed",
     )
     telemetry_work["utc_date"] = telemetry_work["timestamp"].dt.strftime("%Y-%m-%d")
     telemetry_work["equity_numeric"] = pd.to_numeric(
@@ -1311,9 +1863,19 @@ def analyse_role(
 
     telemetry = telemetry.copy()
     telemetry["snapshot_utc_parsed"] = pd.to_datetime(
-        telemetry["snapshot_utc"], utc=True, errors="coerce"
+        telemetry["snapshot_utc"],
+        utc=True,
+        errors="coerce",
+        format="mixed",
     )
     telemetry = telemetry.sort_values("snapshot_utc_parsed")
+    valid_snapshot_times = telemetry["snapshot_utc_parsed"].dropna()
+    observation_start_utc = (
+        None if valid_snapshot_times.empty else pd.Timestamp(valid_snapshot_times.min())
+    )
+    observation_end_utc = (
+        None if valid_snapshot_times.empty else pd.Timestamp(valid_snapshot_times.max())
+    )
     telemetry_run_id_set = {
         str(value).strip()
         for value in telemetry.get(
@@ -1324,8 +1886,26 @@ def analyse_role(
     decision_evidence_validation = _validate_decision_evidence(
         decisions,
         order_events,
+        runtime_events,
         role=role,
         telemetry_run_ids=telemetry_run_id_set,
+        observation_start_utc=observation_start_utc,
+        observation_end_utc=observation_end_utc,
+    )
+    evidence_ownership_issues = _validate_evidence_ownership(
+        role=role,
+        telemetry_run_ids=telemetry_run_id_set,
+        telemetry=telemetry,
+        completed_broker_events=completed_broker_events,
+        order_events=order_events,
+        deals=deals,
+        orders=orders,
+        runtime_events=runtime_events,
+        final_report=final_report,
+    )
+    telemetry_event_lag_issues = _validate_telemetry_event_lag(telemetry)
+    derived_broker_gap_issues = _validate_derived_broker_gaps(
+        completed_broker_events, decisions
     )
 
     completed_broker_event_ledger_present = bool(
@@ -1408,9 +1988,9 @@ def analyse_role(
             & ~decision_stale
         )
     else:
-        # Legacy fixtures/reports predate the explicit availability field.
+        # Missing explicit provenance is invalid for the current audit schema.
         prediction_available = pd.Series(
-            True, index=decisions.index, dtype="bool"
+            False, index=decisions.index, dtype="bool"
         )
     prediction_event_times = pd.to_datetime(
         decisions.loc[prediction_available, "event_time_utc"]
@@ -1695,7 +2275,20 @@ def analyse_role(
         else pd.Series("", index=order_events.index, dtype="object")
     ).fillna("").astype(str)
     strategy_trigger_mask = trigger_types == "STRATEGY_DECISION"
-    control_trigger_mask = trigger_types.str.startswith("CONTROL_")
+    valid_control_trigger_types = frozenset(
+        {
+            "CONTROL_CLEAN_STOP",
+            "CONTROL_FLATTEN_ONLY",
+            "CONTROL_SESSION_GAP_LOCKOUT",
+            *_CONTROL_TRIGGER_BY_ACTION.values(),
+            *(
+                action
+                for action in _KNOWN_DECISION_ACTIONS
+                if action.startswith("CONTROL_")
+            ),
+        }
+    )
+    control_trigger_mask = trigger_types.isin(valid_control_trigger_types)
     unknown_trigger_mask = ~(strategy_trigger_mask | control_trigger_mask)
     strategy_execution_missing_decision_link_count = int(
         (
@@ -1703,12 +2296,20 @@ def analyse_role(
             & ~order_decision_ids.isin(decision_ids)
         ).sum()
     )
-    invalid_control_execution_link_count = int(
-        (
-            control_trigger_mask
-            & ~order_decision_ids.str.startswith("CONTROL_")
-        ).sum()
-    )
+    invalid_control_execution_link_count = 0
+    for row_index in order_events.index[control_trigger_mask]:
+        trigger = trigger_types.loc[row_index]
+        row_role = _audit_text(order_events.loc[row_index].get("role")).lower()
+        row_run_id = _audit_text(order_events.loc[row_index].get("run_id"))
+        control_id = order_decision_ids.loc[row_index]
+        expected_prefix = f"{trigger}:{row_role}:{row_run_id}:"
+        if not control_id.startswith(expected_prefix):
+            invalid_control_execution_link_count += 1
+            continue
+        if trigger in {"CONTROL_CLEAN_STOP", "CONTROL_FLATTEN_ONLY"}:
+            tail = control_id[len(expected_prefix) :]
+            if not tail.isdigit():
+                invalid_control_execution_link_count += 1
     unknown_execution_trigger_count = int(unknown_trigger_mask.sum())
     historical_backfill_decision_ids = set(
         decisions.loc[historical_backfill_mask, "decision_id"]
@@ -1809,10 +2410,16 @@ def analyse_role(
             broker_times["ticket"], errors="coerce"
         ).astype("Int64")
         event_times["completed_parsed"] = pd.to_datetime(
-            event_times["completed_utc"], utc=True, errors="coerce"
+            event_times["completed_utc"],
+            utc=True,
+            errors="coerce",
+            format="mixed",
         )
         broker_times["done_parsed"] = pd.to_datetime(
-            broker_times["time_done_utc"], utc=True, errors="coerce"
+            broker_times["time_done_utc"],
+            utc=True,
+            errors="coerce",
+            format="mixed",
         )
         aligned = event_times.merge(
             broker_times.loc[:, ["ticket_key", "done_parsed"]],
@@ -1908,6 +2515,9 @@ def analyse_role(
     )
 
     audit_failures: list[str] = []
+    audit_failures.extend(evidence_ownership_issues)
+    audit_failures.extend(telemetry_event_lag_issues)
+    audit_failures.extend(derived_broker_gap_issues)
     for label, count in (
         ("duplicate_snapshot_ids", duplicate_snapshot_ids),
         (

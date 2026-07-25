@@ -1291,6 +1291,7 @@ def decide_strategy_transition(
                     duplicate=False,
                     gap=False,
                     stale=False,
+                    entry_blocked_by_policy_cap=True,
                 )
 
     if current == 0 and desired == 1:

@@ -82,6 +82,7 @@ def test_model_b_one_successful_entry_per_utc_day() -> None:
     )
     assert decision.action == "BLOCK_DAILY_ENTRY_CAP"
     assert decision.target_position == 0
+    assert decision.entry_blocked_by_policy_cap is True
 
 
 def test_model_b_exit_uses_hysteresis() -> None:
