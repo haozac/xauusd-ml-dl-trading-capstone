@@ -281,6 +281,20 @@ _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS = frozenset(
         "SESSION_GAP_LOCKOUT_FLATTEN",
     }
 )
+_ALLOWED_SAME_EVENT_PRECEDING_EXPOSED_ACTIONS = frozenset(
+    {
+        "ENTER_LONG",
+        "ENTER_SHORT",
+        "HOLD_LONG",
+        "HOLD_SHORT",
+        "REVERSE_LONG_TO_SHORT",
+        "REVERSE_SHORT_TO_LONG",
+        "CHANGE_POSITION",
+        "BLOCK_MINIMUM_HOLD",
+        "BLOCK_DAILY_POLICY_CAP",
+        "BLOCK_INVALID_SIGNAL",
+    }
+)
 _HISTORICAL_BACKFILL_ACTION = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
 
 
@@ -393,22 +407,34 @@ def _same_event_disposition_counts(
         recognised_later_flatten = bool(
             later["_action"] in _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS
         )
-        first_is_ordinary = bool(
-            first["_action"] != _HISTORICAL_BACKFILL_ACTION
-            and first["_action"] not in _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS
+        recognised_first_exposed_action = bool(
+            first["_action"] in _ALLOWED_SAME_EVENT_PRECEDING_EXPOSED_ACTIONS
         )
         no_backfill_collision = bool(
-            later["_action"] != _HISTORICAL_BACKFILL_ACTION
+            first["_action"] != _HISTORICAL_BACKFILL_ACTION
+            and later["_action"] != _HISTORICAL_BACKFILL_ACTION
+        )
+        later_position_is_valid_exposure = bool(
+            pd.notna(later["_position_before"])
+            and float(later["_position_before"]) in {-1.0, 1.0}
+        )
+        first_ended_with_same_exposure = bool(
+            later_position_is_valid_exposure
+            and pd.notna(first["_target_position"])
+            and float(first["_target_position"])
+            == float(later["_position_before"])
+            and pd.notna(first["_broker_after"])
+            and float(first["_broker_after"])
+            == float(later["_position_before"])
         )
         closes_existing_exposure = bool(
-            pd.notna(later["_position_before"])
-            and float(later["_position_before"]) != 0.0
+            later_position_is_valid_exposure
             and pd.notna(later["_target_position"])
             and float(later["_target_position"]) == 0.0
         )
         broker_flat_when_recorded = bool(
-            pd.isna(later["_broker_after"])
-            or float(later["_broker_after"]) == 0.0
+            pd.notna(later["_broker_after"])
+            and float(later["_broker_after"]) == 0.0
         )
 
         if all(
@@ -416,8 +442,9 @@ def _same_event_disposition_counts(
                 ids_are_distinct,
                 times_are_ordered,
                 recognised_later_flatten,
-                first_is_ordinary,
+                recognised_first_exposed_action,
                 no_backfill_collision,
+                first_ended_with_same_exposure,
                 closes_existing_exposure,
                 broker_flat_when_recorded,
             )
