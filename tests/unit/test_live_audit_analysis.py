@@ -712,7 +712,7 @@ def test_multiple_dispositions_for_one_broker_event_fail_gate(
     assert summary.broker_event_with_multiple_dispositions_count == 1
     assert summary.maximum_dispositions_per_broker_event == 2
     assert (
-        "broker_events_with_multiple_dispositions=1"
+        "unexpected_multiple_disposition_events=1"
         in summary.audit_gate_failures
     )
 
