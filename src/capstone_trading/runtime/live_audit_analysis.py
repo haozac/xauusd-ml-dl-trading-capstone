@@ -289,10 +289,11 @@ _ALLOWED_SAME_EVENT_PRECEDING_EXPOSED_ACTIONS = frozenset(
         "HOLD_SHORT",
         "REVERSE_LONG_TO_SHORT",
         "REVERSE_SHORT_TO_LONG",
-        "CHANGE_POSITION",
         "BLOCK_MINIMUM_HOLD",
         "BLOCK_DAILY_POLICY_CAP",
         "BLOCK_INVALID_SIGNAL",
+        "BLOCK_SPREAD",
+        "BLOCK_RECONCILIATION",
     }
 )
 _HISTORICAL_BACKFILL_ACTION = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
@@ -304,13 +305,14 @@ def _same_event_disposition_counts(
     """Classify multiple decisions sharing one completed broker event.
 
     One later safety-control flatten is legitimate when it closes exposure on
-    an already-processed event between bar completions.  All other repeated
-    dispositions remain audit failures.
+    an already-processed event between bar completions. Virtual continuity is
+    required in both modes. Broker continuity is mode-aware: live evidence
+    must show the same exposure before the flatten and zero afterward, while
+    shadow evidence must remain explicitly broker-flat throughout.
     """
 
     if decisions.empty or "event_time_utc" not in decisions.columns:
         return 0, 0, 0, 0
-
     work = decisions.copy()
     work["_event_time"] = pd.to_datetime(
         work["event_time_utc"],
@@ -321,7 +323,6 @@ def _same_event_disposition_counts(
     work = work.dropna(subset=["_event_time"])
     if work.empty:
         return 0, 0, 0, 0
-
     work["_decision_time"] = pd.to_datetime(
         work.get(
             "decision_utc",
@@ -348,6 +349,16 @@ def _same_event_disposition_counts(
         .astype(str)
         .str.upper()
     )
+    work["_execution_mode"] = (
+        work.get(
+            "execution_mode",
+            pd.Series("", index=work.index, dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
     work["_position_before"] = pd.to_numeric(
         work.get(
             "position_before",
@@ -362,6 +373,13 @@ def _same_event_disposition_counts(
         ),
         errors="coerce",
     )
+    work["_broker_before"] = pd.to_numeric(
+        work.get(
+            "broker_position_before",
+            pd.Series(index=work.index, dtype="float64"),
+        ),
+        errors="coerce",
+    )
     work["_broker_after"] = pd.to_numeric(
         work.get(
             "broker_position_after_inspection",
@@ -369,7 +387,6 @@ def _same_event_disposition_counts(
         ),
         errors="coerce",
     )
-
     multiple_event_count = 0
     allowed_override_count = 0
     unexpected_event_count = 0
@@ -385,7 +402,6 @@ def _same_event_disposition_counts(
         if count != 2:
             unexpected_event_count += 1
             continue
-
         ordered = group.sort_values(
             ["_decision_time"],
             kind="stable",
@@ -393,7 +409,6 @@ def _same_event_disposition_counts(
         )
         first = ordered.iloc[0]
         later = ordered.iloc[1]
-
         ids_are_distinct = bool(
             first["_decision_id"]
             and later["_decision_id"]
@@ -403,6 +418,11 @@ def _same_event_disposition_counts(
             pd.notna(first["_decision_time"])
             and pd.notna(later["_decision_time"])
             and later["_decision_time"] > first["_decision_time"]
+        )
+        execution_mode = str(first["_execution_mode"])
+        execution_modes_are_valid_and_equal = bool(
+            execution_mode in {"live", "shadow"}
+            and str(later["_execution_mode"]) == execution_mode
         )
         recognised_later_flatten = bool(
             later["_action"] in _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS
@@ -418,47 +438,63 @@ def _same_event_disposition_counts(
             pd.notna(later["_position_before"])
             and float(later["_position_before"]) in {-1.0, 1.0}
         )
-        first_ended_with_same_exposure = bool(
+        virtual_position_continuity = bool(
             later_position_is_valid_exposure
             and pd.notna(first["_target_position"])
             and float(first["_target_position"])
             == float(later["_position_before"])
-            and pd.notna(first["_broker_after"])
-            and float(first["_broker_after"])
-            == float(later["_position_before"])
         )
-        closes_existing_exposure = bool(
+        closes_existing_virtual_exposure = bool(
             later_position_is_valid_exposure
             and pd.notna(later["_target_position"])
             and float(later["_target_position"]) == 0.0
         )
-        broker_flat_when_recorded = bool(
-            pd.notna(later["_broker_after"])
-            and float(later["_broker_after"]) == 0.0
-        )
-
+        broker_continuity_is_valid = False
+        if execution_modes_are_valid_and_equal:
+            broker_values_present = bool(
+                pd.notna(first["_broker_after"])
+                and pd.notna(later["_broker_before"])
+                and pd.notna(later["_broker_after"])
+            )
+            if broker_values_present and execution_mode == "live":
+                exposure = float(later["_position_before"])
+                broker_continuity_is_valid = bool(
+                    float(first["_broker_after"]) == exposure
+                    and float(later["_broker_before"]) == exposure
+                    and float(later["_broker_after"]) == 0.0
+                )
+            elif broker_values_present and execution_mode == "shadow":
+                first_broker_before_present = pd.notna(first["_broker_before"])
+                broker_continuity_is_valid = bool(
+                    first_broker_before_present
+                    and float(first["_broker_before"]) == 0.0
+                    and float(first["_broker_after"]) == 0.0
+                    and float(later["_broker_before"]) == 0.0
+                    and float(later["_broker_after"]) == 0.0
+                )
         if all(
             (
                 ids_are_distinct,
                 times_are_ordered,
+                execution_modes_are_valid_and_equal,
                 recognised_later_flatten,
                 recognised_first_exposed_action,
                 no_backfill_collision,
-                first_ended_with_same_exposure,
-                closes_existing_exposure,
-                broker_flat_when_recorded,
+                virtual_position_continuity,
+                closes_existing_virtual_exposure,
+                broker_continuity_is_valid,
             )
         ):
             allowed_override_count += 1
         else:
             unexpected_event_count += 1
-
     return (
         multiple_event_count,
         allowed_override_count,
         unexpected_event_count,
         maximum_dispositions,
     )
+
 
 
 def _timestamp_series(frame: pd.DataFrame, column: str) -> pd.Series:

@@ -42,9 +42,11 @@ def _write_role(role_root: Path, *, role: str = "model_a") -> None:
             "decision_id": [f"{role}:d0", f"{role}:d1", f"{role}:d2"],
             "event_time_utc": times,
             "decision_utc": times + pd.Timedelta(minutes=15, seconds=1),
+            "execution_mode": ["live", "live", "live"],
             "action": ["ENTER_LONG", "HOLD_LONG", "EXIT_POSITION"],
             "position_before": [0, 1, 1],
             "target_position": [1, 1, 0],
+            "broker_position_before": [0, 1, 1],
             "broker_position_after_inspection": [1, 1, 0],
         }
     ).to_csv(role_root / "decisions.csv", index=False)
@@ -113,8 +115,10 @@ def test_recognised_same_event_safety_flatten_is_allowed(
         role_root,
         decision_id=f"control:{action}",
         decision_utc="2026-07-24T00:16:00+00:00",
+        execution_mode="live",
         action=action,
         position_before=1,
+        broker_position_before=1,
         target_position=0,
         broker_position_after_inspection=0,
     )
@@ -197,8 +201,10 @@ def test_allowed_override_fields_are_exported_in_consolidated_report(
         runtime / "model_a",
         decision_id="control:DAILY_STOP_FLATTEN",
         decision_utc="2026-07-24T00:16:00+00:00",
+        execution_mode="live",
         action="DAILY_STOP_FLATTEN",
         position_before=1,
+        broker_position_before=1,
         target_position=0,
         broker_position_after_inspection=0,
     )
@@ -223,3 +229,112 @@ def test_allowed_override_fields_are_exported_in_consolidated_report(
         item for item in saved["models"] if item["role"] == "model_a"
     )
     assert saved_model_a["allowed_same_event_safety_override_count"] == 1
+
+def _set_role_execution_mode(role_root: Path, mode: str) -> None:
+    path = role_root / "decisions.csv"
+    decisions = pd.read_csv(path)
+    decisions["execution_mode"] = mode
+    if mode == "shadow":
+        decisions["broker_position_before"] = 0
+        decisions["broker_position_after_inspection"] = 0
+    decisions.to_csv(path, index=False)
+
+
+def test_shadow_same_event_safety_flatten_is_allowed_by_analyse_role(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    _write_role(role_root)
+    _set_role_execution_mode(role_root, "shadow")
+    _append_same_event_row(
+        role_root,
+        decision_id="shadow-control:DAILY_STOP_FLATTEN",
+        decision_utc="2026-07-24T00:16:00+00:00",
+        execution_mode="shadow",
+        action="DAILY_STOP_FLATTEN",
+        position_before=1,
+        broker_position_before=0,
+        target_position=0,
+        broker_position_after_inspection=0,
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=tmp_path / "report",
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is True
+    assert summary.operational_acceptance_status == "PASS"
+    assert summary.allowed_same_event_safety_override_count == 1
+    assert summary.unexpected_multiple_disposition_event_count == 0
+
+
+@pytest.mark.parametrize("later_broker_before", [None, 0, -1])
+def test_live_mismatched_broker_before_fails_full_analyse_role(
+    tmp_path: Path,
+    later_broker_before: int | None,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    _write_role(role_root)
+    _append_same_event_row(
+        role_root,
+        decision_id=f"invalid-live-broker-before:{later_broker_before}",
+        decision_utc="2026-07-24T00:16:00+00:00",
+        execution_mode="live",
+        action="DAILY_STOP_FLATTEN",
+        position_before=1,
+        broker_position_before=later_broker_before,
+        target_position=0,
+        broker_position_after_inspection=0,
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=tmp_path / "report",
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "FAIL"
+    assert summary.allowed_same_event_safety_override_count == 0
+    assert summary.unexpected_multiple_disposition_event_count == 1
+    assert "unexpected_multiple_disposition_events=1" in summary.audit_gate_failures
+
+
+@pytest.mark.parametrize("first_action", ["BLOCK_SPREAD", "BLOCK_RECONCILIATION"])
+def test_exposure_preserving_block_can_precede_live_safety_flatten(
+    tmp_path: Path,
+    first_action: str,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    _write_role(role_root)
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[0, "action"] = first_action
+    decisions.to_csv(decisions_path, index=False)
+    _append_same_event_row(
+        role_root,
+        decision_id=f"control-after:{first_action}",
+        decision_utc="2026-07-24T00:16:00+00:00",
+        execution_mode="live",
+        action="DAILY_STOP_FLATTEN",
+        position_before=1,
+        broker_position_before=1,
+        target_position=0,
+        broker_position_after_inspection=0,
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=tmp_path / "report",
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is True
+    assert summary.allowed_same_event_safety_override_count == 1
+    assert summary.unexpected_multiple_disposition_event_count == 0
+
