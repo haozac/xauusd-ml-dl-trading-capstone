@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from capstone_trading.runtime.live_audit_analysis import (
     analyse_role,
@@ -63,11 +64,41 @@ def write_role(root: Path, role: str, equity: list[float]) -> None:
             "latest_decision_event_time_utc": times,
         }
     ).to_csv(role_root / "telemetry.csv", index=False)
+    decision_actions = ["ENTER_LONG"] + ["HOLD_LONG"] * (len(equity) - 1)
+    decision_positions_before = [0] + [1] * (len(equity) - 1)
     pd.DataFrame(
         {
+            "schema_version": ["1.0"] * len(equity),
             "decision_id": [f"{role}:decision:{index}" for index in range(len(equity))],
+            "role": [role] * len(equity),
+            "run_id": [f"dual_{role}_test"] * len(equity),
+            "iteration": list(range(1, len(equity) + 1)),
             "event_time_utc": times,
-            "action": ["ENTER_LONG"] + ["HOLD_LONG"] * (len(equity) - 1),
+            "decision_utc": times + pd.Timedelta(seconds=1),
+            "execution_mode": ["shadow"] * len(equity),
+            "broker_event_disposition": decision_actions,
+            "action": decision_actions,
+            "position_before": decision_positions_before,
+            "desired_position": [1] * len(equity),
+            "target_position": [1] * len(equity),
+            "duplicate_event": [False] * len(equity),
+            "gap_from_previous_event": [False] * len(equity),
+            "stale_event_warning": [False] * len(equity),
+            "policy_cap_reached": [False] * len(equity),
+            "entry_blocked_by_policy_cap": [False] * len(equity),
+            "exit_allowed_when_capped": [False] * len(equity),
+            "close_only_reversal": [False] * len(equity),
+            "daily_stop_active": [False] * len(equity),
+            "total_stop_active": [False] * len(equity),
+            "kill_switch_active": [False] * len(equity),
+            "reconciliation_status": ["PASS_SHADOW_BROKER_FLAT"] * len(equity),
+            "broker_position_before": [0] * len(equity),
+            "broker_position_after_inspection": [0] * len(equity),
+            "order_check_called": [False] * len(equity),
+            "order_check_passed": [False] * len(equity),
+            "order_send_called": [False] * len(equity),
+            "order_send_passed": [False] * len(equity),
+            "broker_position_after": [None] * len(equity),
         }
     ).to_csv(role_root / "decisions.csv", index=False)
     write_broker_event_ledger(role_root, role, times)
@@ -123,11 +154,46 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
             "latest_decision_event_time_utc": [times[0], times[0], times[-1]],
         }
     ).to_csv(role_root / "telemetry.csv", index=False)
+    decision_actions = ["ENTER_LONG", "EXIT_POSITION"]
     pd.DataFrame(
         {
+            "schema_version": ["1.0", "1.0"],
             "decision_id": ["d-entry", "d-exit"],
+            "role": ["model_a", "model_a"],
+            "run_id": ["run-1", "run-1"],
+            "iteration": [1, 2],
             "event_time_utc": [times[0], times[-1]],
-            "action": ["ENTER_LONG", "EXIT_POSITION"],
+            "decision_utc": [
+                times[0] + pd.Timedelta(seconds=1),
+                times[-1] + pd.Timedelta(seconds=1),
+            ],
+            "execution_mode": ["live", "live"],
+            "broker_event_disposition": decision_actions,
+            "action": decision_actions,
+            "position_before": [0, 1],
+            "desired_position": [1, 0],
+            "target_position": [1, 0],
+            "duplicate_event": [False, False],
+            "gap_from_previous_event": [False, False],
+            "stale_event_warning": [False, False],
+            "policy_cap_reached": [False, False],
+            "entry_blocked_by_policy_cap": [False, False],
+            "exit_allowed_when_capped": [False, False],
+            "close_only_reversal": [False, False],
+            "daily_stop_active": [False, False],
+            "total_stop_active": [False, False],
+            "kill_switch_active": [False, False],
+            "reconciliation_status": [
+                "PASS_STATE_MATCHES_BROKER",
+                "PASS_STATE_MATCHES_BROKER",
+            ],
+            "broker_position_before": [0, 1],
+            "broker_position_after_inspection": [1, 0],
+            "order_check_called": [True, True],
+            "order_check_passed": [True, True],
+            "order_send_called": [True, True],
+            "order_send_passed": [True, True],
+            "broker_position_after": [1, 0],
         }
     ).to_csv(role_root / "decisions.csv", index=False)
     write_broker_event_ledger(
@@ -135,9 +201,13 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
     )
     pd.DataFrame(
         {
+            "schema_version": ["1.0", "1.0"],
             "execution_id": ["e-entry", "e-exit"],
             "decision_id": ["d-entry", "d-exit"],
+            "role": ["model_a", "model_a"],
+            "run_id": ["run-1", "run-1"],
             "trigger_type": ["STRATEGY_DECISION", "STRATEGY_DECISION"],
+            "event_time_utc": [times[0], times[-1]],
             "completed_utc": [times[0], times[-1]],
             "order_send_passed": [True, True],
             "order_ticket": [101, 102],
@@ -329,6 +399,20 @@ def test_control_execution_does_not_require_strategy_decision_link(
     output = tmp_path / "report"
     write_completed_trade(role_root)
 
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[1, "action"] = "HOLD_LONG"
+    decisions.loc[1, "broker_event_disposition"] = "HOLD_LONG"
+    decisions.loc[1, "desired_position"] = 1
+    decisions.loc[1, "target_position"] = 1
+    decisions.loc[1, "broker_position_after_inspection"] = 1
+    decisions.loc[1, "order_check_called"] = False
+    decisions.loc[1, "order_check_passed"] = False
+    decisions.loc[1, "order_send_called"] = False
+    decisions.loc[1, "order_send_passed"] = False
+    decisions.loc[1, "broker_position_after"] = None
+    decisions.to_csv(decisions_path, index=False)
+
     events_path = role_root / "order_events.csv"
     events = pd.read_csv(events_path)
     events.loc[1, "trigger_type"] = "CONTROL_CLEAN_STOP"
@@ -351,9 +435,10 @@ def test_control_execution_does_not_require_strategy_decision_link(
 def test_model_availability_is_reported_separately_from_disposition_coverage(
     tmp_path: Path,
 ) -> None:
-    role_root = tmp_path / "runtime" / "model_a"
+    runtime = tmp_path / "runtime"
+    role_root = runtime / "model_a"
     output = tmp_path / "report"
-    write_completed_trade(role_root)
+    write_role(runtime, "model_a", [10000.0, 10000.0])
 
     decisions_path = role_root / "decisions.csv"
     decisions = pd.read_csv(decisions_path)
@@ -368,14 +453,18 @@ def test_model_availability_is_reported_separately_from_disposition_coverage(
     ]
     decisions["stale_event_warning"] = [False, True]
     decisions["action"] = [
-        "ENTER_LONG",
+        "HOLD_FLAT",
         "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
     ]
-    decisions["target_position"] = [1, 0]
-    decisions["broker_position_after_inspection"] = [1, 0]
+    decisions["broker_event_disposition"] = decisions["action"]
+    decisions["position_before"] = [0, 0]
+    decisions["desired_position"] = [0, 0]
+    decisions["target_position"] = [0, 0]
+    decisions["broker_position_before"] = [0, 0]
+    decisions["broker_position_after_inspection"] = [0, 0]
     decisions["decision_utc"] = [
-        "2026-07-24T00:15:01+00:00",
-        "2026-07-24T00:16:01+00:00",
+        "2026-07-24T00:00:01+00:00",
+        "2026-07-25T00:00:01+00:00",
     ]
     decisions.to_csv(decisions_path, index=False)
 
@@ -383,7 +472,7 @@ def test_model_availability_is_reported_separately_from_disposition_coverage(
         role_root,
         role="model_a",
         output_root=output,
-        expected_poll_seconds=30,
+        expected_poll_seconds=86400,
     )
 
     assert summary.formal_audit_gate is True
@@ -434,11 +523,21 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
     ).to_csv(role_root / "telemetry.csv", index=False)
 
     prediction_available = [True] * 31 + [False] * 47
+    decision_actions = (
+        ["HOLD_FLAT"] * 31
+        + ["CONTROL_GAP_BLOCK"]
+        + ["MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"] * 46
+    )
     pd.DataFrame(
         {
+            "schema_version": ["1.0"] * 78,
             "decision_id": [f"d:{index}" for index in range(78)],
+            "role": ["model_a"] * 78,
+            "run_id": ["run-1"] * 78,
+            "iteration": list(range(1, 79)),
             "event_time_utc": events,
             "decision_utc": snapshots,
+            "execution_mode": ["shadow"] * 78,
             "model_prediction_available": prediction_available,
             "model_prediction_event_time_utc": [
                 event if available else None
@@ -449,13 +548,28 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
             "latest_completed_bar_time_utc": events,
             "probability_up": [0.51] * 31 + [None] * 47,
             "stale_event_warning": [False] * 31 + [True] * 47,
-            "action": (
-                ["HOLD_FLAT"] * 31
-                + ["CONTROL_GAP_BLOCK"]
-                + ["MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"] * 46
-            ),
+            "broker_event_disposition": decision_actions,
+            "action": decision_actions,
+            "position_before": [0] * 78,
+            "desired_position": [0] * 78,
             "target_position": [0] * 78,
+            "duplicate_event": [False] * 78,
+            "gap_from_previous_event": [False] * 31 + [True] + [False] * 46,
+            "policy_cap_reached": [False] * 78,
+            "entry_blocked_by_policy_cap": [False] * 78,
+            "exit_allowed_when_capped": [False] * 78,
+            "close_only_reversal": [False] * 78,
+            "daily_stop_active": [False] * 78,
+            "total_stop_active": [False] * 78,
+            "kill_switch_active": [False] * 78,
+            "reconciliation_status": ["PASS_SHADOW_BROKER_FLAT"] * 78,
+            "broker_position_before": [0] * 78,
             "broker_position_after_inspection": [0] * 78,
+            "order_check_called": [False] * 78,
+            "order_check_passed": [False] * 78,
+            "order_send_called": [False] * 78,
+            "order_send_passed": [False] * 78,
+            "broker_position_after": [None] * 78,
         }
     ).to_csv(role_root / "decisions.csv", index=False)
     write_broker_event_ledger(role_root, "model_a", events)
@@ -596,8 +710,16 @@ def test_safe_historical_backfill_is_limited_recovered(tmp_path: Path) -> None:
     decisions = pd.read_csv(decisions_path)
     decisions["model_prediction_available"] = [True, False, True]
     decisions["stale_event_warning"] = [False, True, False]
-    decisions.loc[1, "action"] = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+    decisions["action"] = [
+        "HOLD_FLAT",
+        "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL",
+        "HOLD_FLAT",
+    ]
+    decisions["broker_event_disposition"] = decisions["action"]
+    decisions["position_before"] = [0, 0, 0]
+    decisions["desired_position"] = [0, 0, 0]
     decisions["target_position"] = [0, 0, 0]
+    decisions["broker_position_before"] = [0, 0, 0]
     decisions["broker_position_after_inspection"] = [0, 0, 0]
     decisions.to_csv(decisions_path, index=False)
 
@@ -735,3 +857,325 @@ def test_current_prediction_lag_has_explicit_scope_alias(
         summary.maximum_current_broker_event_to_model_prediction_lag_minutes
         == summary.maximum_broker_event_to_model_prediction_lag_minutes
     )
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "expected_reason"),
+    [
+        ("schema_version", "2.0", "invalid_schema_version=1"),
+        ("decision_id", "", "blank_decision_id=1"),
+        ("role", "model_b", "role_mismatch=1"),
+        ("run_id", "unknown-run", "run_id_not_in_telemetry=1"),
+        ("event_time_utc", "not-a-timestamp", "invalid_event_time_utc=1"),
+        ("decision_utc", "not-a-timestamp", "invalid_decision_utc=1"),
+        (
+            "model_prediction_event_time_utc",
+            "not-a-timestamp",
+            "invalid_optional_timestamp:model_prediction_event_time_utc=1",
+        ),
+        ("duplicate_event", True, "persisted_duplicate_event_not_false=1"),
+    ],
+)
+def test_systematic_decision_evidence_provenance_failures_are_gated(
+    tmp_path: Path,
+    column: str,
+    value: object,
+    expected_reason: str,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions[column] = decisions.get(
+        column, pd.Series(index=decisions.index, dtype="object")
+    ).astype("object")
+    decisions.loc[0, column] = value
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "FAIL"
+    assert summary.invalid_decision_evidence_count >= 1
+    assert expected_reason in summary.decision_evidence_issue_reasons
+    assert (output / "model_a_audit_gate.json").exists()
+    assert (output / "model_a_daily_summary.csv").exists()
+
+
+def test_enter_short_with_long_target_is_rejected(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[0, "action"] = "ENTER_SHORT"
+    decisions.loc[0, "broker_event_disposition"] = "ENTER_SHORT"
+    decisions.loc[0, "desired_position"] = -1
+    decisions.loc[0, "target_position"] = 1
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert "invalid_action_position_contract=1" in summary.decision_evidence_issue_reasons
+
+
+def test_enter_long_when_already_long_is_rejected(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[0, "position_before"] = 1
+    decisions.loc[0, "broker_position_before"] = 1
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert "invalid_action_position_contract=1" in summary.decision_evidence_issue_reasons
+
+
+def test_model_b_short_evidence_is_rejected(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    role_root = runtime / "model_b"
+    output = tmp_path / "report"
+    write_role(runtime, "model_b", [10000.0, 10000.0])
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[0, "action"] = "HOLD_SHORT"
+    decisions.loc[0, "broker_event_disposition"] = "HOLD_SHORT"
+    decisions.loc[0, "position_before"] = -1
+    decisions.loc[0, "desired_position"] = -1
+    decisions.loc[0, "target_position"] = -1
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_b",
+        output_root=output,
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert "model_b_short_exposure=1" in summary.decision_evidence_issue_reasons
+
+
+def test_shadow_block_spread_is_rejected(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    role_root = runtime / "model_a"
+    output = tmp_path / "report"
+    write_role(runtime, "model_a", [10000.0, 10000.0])
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[1, "action"] = "BLOCK_SPREAD"
+    decisions.loc[1, "broker_event_disposition"] = "BLOCK_SPREAD"
+    decisions.loc[1, "desired_position"] = -1
+    decisions.loc[1, "target_position"] = 1
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert "block_spread_not_live=1" in summary.decision_evidence_issue_reasons
+
+
+def _convert_exit_to_daily_stop(
+    role_root: Path,
+    *,
+    active: bool,
+    successful_execution: bool,
+) -> None:
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions.loc[1, "action"] = "DAILY_STOP_FLATTEN"
+    decisions.loc[1, "broker_event_disposition"] = "DAILY_STOP_FLATTEN"
+    decisions.loc[1, "daily_stop_active"] = active
+    if not successful_execution:
+        decisions.loc[1, "order_check_called"] = False
+        decisions.loc[1, "order_check_passed"] = False
+        decisions.loc[1, "order_send_called"] = False
+        decisions.loc[1, "order_send_passed"] = False
+        decisions.loc[1, "broker_position_after"] = None
+    decisions.to_csv(decisions_path, index=False)
+
+    events_path = role_root / "order_events.csv"
+    events = pd.read_csv(events_path)
+    events.loc[1, "trigger_type"] = "CONTROL_DAILY_STOP"
+    events.loc[1, "decision_id"] = "CONTROL_DAILY_STOP:model_a:run-1:2"
+    if not successful_execution:
+        events = events.iloc[[0]].copy()
+    events.to_csv(events_path, index=False)
+
+
+def test_daily_stop_flatten_requires_active_control(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+    _convert_exit_to_daily_stop(
+        role_root,
+        active=False,
+        successful_execution=True,
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert "inactive_control_flag:daily_stop_active=1" in summary.decision_evidence_issue_reasons
+
+
+def test_live_control_flatten_requires_successful_execution_evidence(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+    _convert_exit_to_daily_stop(
+        role_root,
+        active=True,
+        successful_execution=False,
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert (
+        "live_transition_missing_successful_order_flags=1"
+        in summary.decision_evidence_issue_reasons
+    )
+    assert (
+        "live_transition_missing_successful_order_event=1"
+        in summary.decision_evidence_issue_reasons
+    )
+
+
+def test_reconciliation_incident_is_limited_recovered(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    runtime_events_path = role_root / "runtime_events.csv"
+    events = pd.read_csv(runtime_events_path)
+    events = pd.concat(
+        [
+            events,
+            pd.DataFrame(
+                [
+                    {
+                        "runtime_event_id": "reconciliation-incident",
+                        "timestamp_utc": "2026-07-24T00:00:45+00:00",
+                        "event_type": "RECONCILIATION_INCIDENT",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    events.to_csv(runtime_events_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "LIMITED_RECOVERED"
+    assert "reconciliation_incident_count=1" in summary.limited_recovery_reasons
+
+
+def test_nonpass_reconciliation_snapshot_is_limited_recovered(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    telemetry_path = role_root / "telemetry.csv"
+    telemetry = pd.read_csv(telemetry_path)
+    telemetry.loc[1, "reconciliation_status"] = "BLOCK_BROKER_STATE_MISMATCH"
+    telemetry.to_csv(telemetry_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "LIMITED_RECOVERED"
+    assert (
+        "reconciliation_nonpass_snapshot_count=1"
+        in summary.limited_recovery_reasons
+    )
+
+
+
+def test_consolidated_report_survives_invalid_decision_evidence(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    output = tmp_path / "report"
+    write_role(runtime, "model_a", [10000.0, 10000.0])
+    write_role(runtime, "model_b", [10000.0, 10000.0])
+
+    decisions_path = runtime / "model_a" / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions["schema_version"] = decisions["schema_version"].astype("object")
+    decisions.loc[0, "schema_version"] = "corrupt"
+    decisions.to_csv(decisions_path, index=False)
+
+    report = build_observation_report(
+        runtime,
+        output,
+        expected_poll_seconds=86400,
+    )
+
+    assert report["formal_audit_gate"] is False
+    statuses = {
+        model["role"]: model["operational_acceptance_status"]
+        for model in report["models"]
+    }
+    assert statuses == {"model_a": "FAIL", "model_b": "PASS"}
+    assert (output / "consolidated_observation_report.json").exists()
+    assert (output / "consolidated_model_summary.csv").exists()
+    assert (output / "model_a_audit_gate.json").exists()
+    assert (output / "model_b_audit_gate.json").exists()

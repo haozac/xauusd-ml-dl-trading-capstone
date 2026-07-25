@@ -29,6 +29,9 @@ class RoleObservationSummary:
     limited_recovery_reasons: tuple[str, ...]
     telemetry_rows: int
     decision_rows: int
+    invalid_decision_evidence_count: int
+    decision_evidence_issue_count: int
+    decision_evidence_issue_reasons: tuple[str, ...]
     unique_completed_event_count: int
     completed_broker_event_ledger_rows: int
     completed_broker_event_ledger_present: bool
@@ -497,10 +500,474 @@ def _same_event_disposition_counts(
 
 
 
+
+_CURRENT_DECISION_SCHEMA_VERSION = "1.0"
+_VALID_DECISION_ROLES = frozenset({"model_a", "model_b"})
+_VALID_EXECUTION_MODES = frozenset({"live", "shadow"})
+_VALID_POSITIONS = frozenset({-1, 0, 1})
+_REQUIRED_DECISION_EVIDENCE_COLUMNS = (
+    "schema_version",
+    "decision_id",
+    "role",
+    "run_id",
+    "iteration",
+    "event_time_utc",
+    "decision_utc",
+    "execution_mode",
+    "broker_event_disposition",
+    "action",
+    "position_before",
+    "desired_position",
+    "target_position",
+    "duplicate_event",
+    "gap_from_previous_event",
+    "stale_event_warning",
+    "policy_cap_reached",
+    "entry_blocked_by_policy_cap",
+    "exit_allowed_when_capped",
+    "close_only_reversal",
+    "daily_stop_active",
+    "total_stop_active",
+    "kill_switch_active",
+    "reconciliation_status",
+    "broker_position_before",
+    "broker_position_after_inspection",
+    "order_check_called",
+    "order_check_passed",
+    "order_send_called",
+    "order_send_passed",
+    "broker_position_after",
+)
+_OPTIONAL_DECISION_TIMESTAMP_COLUMNS = (
+    "model_prediction_event_time_utc",
+    "signal_window_start_utc",
+    "signal_window_end_utc",
+    "latest_completed_bar_time_utc",
+)
+_KNOWN_DECISION_ACTIONS = frozenset(
+    {
+        "ENTER_LONG",
+        "ENTER_SHORT",
+        "HOLD_FLAT",
+        "HOLD_LONG",
+        "HOLD_SHORT",
+        "EXIT_POSITION",
+        "REVERSE_LONG_TO_SHORT",
+        "REVERSE_SHORT_TO_LONG",
+        "BLOCK_MINIMUM_HOLD",
+        "BLOCK_DAILY_POLICY_CAP",
+        "CLOSE_ONLY_DAILY_POLICY_CAP",
+        "EXIT_POSITION_CAP_REACHED",
+        "BLOCK_DAILY_ENTRY_CAP",
+        "BLOCK_RECONCILIATION",
+        "BLOCK_INVALID_SIGNAL",
+        "BLOCK_SPREAD",
+        "PARTIAL_REVERSAL_FLAT",
+        "KILL_SWITCH_FLATTEN",
+        "KILL_SWITCH_BLOCK",
+        "TOTAL_STOP_FLATTEN",
+        "TOTAL_STOP_BLOCK",
+        "DAILY_STOP_FLATTEN",
+        "DAILY_STOP_BLOCK",
+        "SESSION_GAP_LOCKOUT_FLATTEN",
+        "BLOCK_SESSION_GAP_LOCKOUT",
+        "CONTROL_FRESH_START_FLATTEN",
+        "CONTROL_FRESH_START_BLOCK",
+        "CONTROL_GAP_FLATTEN",
+        "CONTROL_GAP_BLOCK",
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN",
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK",
+        "CONTROL_MODEL_UNAVAILABLE_FLATTEN",
+        "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
+        "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL",
+    }
+)
+_MODEL_A_ONLY_ACTIONS = frozenset(
+    {
+        "ENTER_SHORT",
+        "HOLD_SHORT",
+        "REVERSE_LONG_TO_SHORT",
+        "REVERSE_SHORT_TO_LONG",
+        "BLOCK_MINIMUM_HOLD",
+        "BLOCK_DAILY_POLICY_CAP",
+        "CLOSE_ONLY_DAILY_POLICY_CAP",
+        "EXIT_POSITION_CAP_REACHED",
+    }
+)
+_MODEL_B_ONLY_ACTIONS = frozenset({"BLOCK_DAILY_ENTRY_CAP"})
+_RISK_CONTROL_FLAG_BY_ACTION = {
+    "KILL_SWITCH_FLATTEN": "kill_switch_active",
+    "KILL_SWITCH_BLOCK": "kill_switch_active",
+    "TOTAL_STOP_FLATTEN": "total_stop_active",
+    "TOTAL_STOP_BLOCK": "total_stop_active",
+    "DAILY_STOP_FLATTEN": "daily_stop_active",
+    "DAILY_STOP_BLOCK": "daily_stop_active",
+}
+_CONTROL_TRIGGER_BY_ACTION = {
+    "KILL_SWITCH_FLATTEN": "CONTROL_KILL_SWITCH",
+    "TOTAL_STOP_FLATTEN": "CONTROL_TOTAL_STOP",
+    "DAILY_STOP_FLATTEN": "CONTROL_DAILY_STOP",
+    "SESSION_GAP_LOCKOUT_FLATTEN": "CONTROL_SESSION_GAP_LOCKOUT",
+}
+
+
+@dataclass(frozen=True)
+class DecisionEvidenceValidation:
+    invalid_row_count: int
+    issue_count: int
+    reason_counts: tuple[str, ...]
+
+
+def _audit_text(value: Any) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    return str(value).strip()
+
+
+def _audit_bool(value: Any) -> bool | None:
+    text = _audit_text(value).lower()
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def _audit_int(value: Any) -> int | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _audit_timestamp(value: Any) -> pd.Timestamp | None:
+    text = _audit_text(value)
+    if not text:
+        return None
+    parsed = pd.to_datetime(text, utc=True, errors="coerce")
+    return None if pd.isna(parsed) else pd.Timestamp(parsed)
+
+
+def _decision_action_contract_is_valid(
+    *,
+    action: str,
+    role: str,
+    before: int,
+    desired: int,
+    target: int,
+) -> bool:
+    if action == "ENTER_LONG":
+        return (before, desired, target) == (0, 1, 1)
+    if action == "ENTER_SHORT":
+        return role == "model_a" and (before, desired, target) == (0, -1, -1)
+    if action == "HOLD_FLAT":
+        return (before, desired, target) == (0, 0, 0)
+    if action == "HOLD_LONG":
+        return (before, desired, target) == (1, 1, 1)
+    if action == "HOLD_SHORT":
+        return role == "model_a" and (before, desired, target) == (-1, -1, -1)
+    if action == "EXIT_POSITION":
+        return before in {-1, 1} and desired == 0 and target == 0
+    if action == "REVERSE_LONG_TO_SHORT":
+        return role == "model_a" and (before, desired, target) == (1, -1, -1)
+    if action == "REVERSE_SHORT_TO_LONG":
+        return role == "model_a" and (before, desired, target) == (-1, 1, 1)
+    if action in {"BLOCK_MINIMUM_HOLD", "BLOCK_DAILY_POLICY_CAP"}:
+        return role == "model_a" and desired != before and target == before
+    if action == "CLOSE_ONLY_DAILY_POLICY_CAP":
+        return role == "model_a" and before in {-1, 1} and desired == -before and target == 0
+    if action == "EXIT_POSITION_CAP_REACHED":
+        return role == "model_a" and before in {-1, 1} and desired == 0 and target == 0
+    if action == "BLOCK_DAILY_ENTRY_CAP":
+        return role == "model_b" and (before, desired, target) == (0, 1, 0)
+    if action in {"BLOCK_RECONCILIATION", "BLOCK_INVALID_SIGNAL"}:
+        return desired == before and target == before
+    if action == "BLOCK_SPREAD":
+        return desired != before and target == before
+    if action == "PARTIAL_REVERSAL_FLAT":
+        return before in {-1, 1} and desired == -before and target == 0
+    if action in {
+        "KILL_SWITCH_FLATTEN",
+        "TOTAL_STOP_FLATTEN",
+        "DAILY_STOP_FLATTEN",
+        "SESSION_GAP_LOCKOUT_FLATTEN",
+        "CONTROL_FRESH_START_FLATTEN",
+        "CONTROL_GAP_FLATTEN",
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN",
+        "CONTROL_MODEL_UNAVAILABLE_FLATTEN",
+    }:
+        return before in {-1, 1} and desired == 0 and target == 0
+    if action in {
+        "KILL_SWITCH_BLOCK",
+        "TOTAL_STOP_BLOCK",
+        "DAILY_STOP_BLOCK",
+        "BLOCK_SESSION_GAP_LOCKOUT",
+        "CONTROL_FRESH_START_BLOCK",
+        "CONTROL_GAP_BLOCK",
+        "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK",
+        "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
+    }:
+        return (before, desired, target) == (0, 0, 0)
+    if action == "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL":
+        return desired == before and target == before
+    return False
+
+
+def _expected_execution_trigger(action: str) -> str:
+    if action in _CONTROL_TRIGGER_BY_ACTION:
+        return _CONTROL_TRIGGER_BY_ACTION[action]
+    if action.startswith("CONTROL_"):
+        return action
+    return "STRATEGY_DECISION"
+
+
+def _validate_decision_evidence(
+    decisions: pd.DataFrame,
+    order_events: pd.DataFrame,
+    *,
+    role: str,
+    telemetry_run_ids: set[str],
+) -> DecisionEvidenceValidation:
+    """Validate persisted decision meaning without interrupting report output.
+
+    Every problem is accumulated as an evidence issue.  The caller can fail the
+    formal gate while still writing all daily and consolidated report artefacts.
+    """
+
+    reason_counts: dict[str, int] = {}
+    invalid_rows: set[int] = set()
+
+    def add(index: int, reason: str) -> None:
+        invalid_rows.add(index)
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+    missing_columns = [
+        column
+        for column in _REQUIRED_DECISION_EVIDENCE_COLUMNS
+        if column not in decisions.columns
+    ]
+    if missing_columns:
+        affected = max(1, len(decisions))
+        for column in missing_columns:
+            reason_counts[f"missing_required_column:{column}"] = affected
+        invalid_rows.update(range(len(decisions)))
+
+    successful_orders = order_events.copy()
+    if not successful_orders.empty:
+        successful_orders = successful_orders.loc[
+            _boolean(successful_orders, "order_send_passed")
+            .reindex(successful_orders.index)
+            .fillna(False)
+            .astype(bool)
+        ].copy()
+        successful_orders["_role"] = successful_orders.get(
+            "role", pd.Series("", index=successful_orders.index)
+        ).fillna("").astype(str).str.strip().str.lower()
+        successful_orders["_run_id"] = successful_orders.get(
+            "run_id", pd.Series("", index=successful_orders.index)
+        ).fillna("").astype(str).str.strip()
+        successful_orders["_trigger"] = successful_orders.get(
+            "trigger_type", pd.Series("", index=successful_orders.index)
+        ).fillna("").astype(str).str.strip().str.upper()
+        successful_orders["_decision_id"] = successful_orders.get(
+            "decision_id", pd.Series("", index=successful_orders.index)
+        ).fillna("").astype(str).str.strip()
+        successful_orders["_event_time"] = pd.to_datetime(
+            successful_orders.get(
+                "event_time_utc",
+                pd.Series(index=successful_orders.index, dtype="object"),
+            ),
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+
+    for offset, (_, row) in enumerate(decisions.iterrows()):
+        index = int(offset)
+        schema = _audit_text(row.get("schema_version"))
+        decision_id = _audit_text(row.get("decision_id"))
+        row_role = _audit_text(row.get("role")).lower()
+        run_id = _audit_text(row.get("run_id"))
+        iteration = _audit_int(row.get("iteration"))
+        mode = _audit_text(row.get("execution_mode")).lower()
+        action = _audit_text(row.get("action")).upper()
+        disposition = _audit_text(row.get("broker_event_disposition")).upper()
+        event_time = _audit_timestamp(row.get("event_time_utc"))
+        decision_time = _audit_timestamp(row.get("decision_utc"))
+        before = _audit_int(row.get("position_before"))
+        desired = _audit_int(row.get("desired_position"))
+        target = _audit_int(row.get("target_position"))
+        broker_before = _audit_int(row.get("broker_position_before"))
+        broker_after = _audit_int(row.get("broker_position_after_inspection"))
+        broker_after_execution = _audit_int(row.get("broker_position_after"))
+        duplicate = _audit_bool(row.get("duplicate_event"))
+        gap = _audit_bool(row.get("gap_from_previous_event"))
+        stale = _audit_bool(row.get("stale_event_warning"))
+        order_check_called = _audit_bool(row.get("order_check_called"))
+        order_check_passed = _audit_bool(row.get("order_check_passed"))
+        order_send_called = _audit_bool(row.get("order_send_called"))
+        order_send_passed = _audit_bool(row.get("order_send_passed"))
+
+        if schema != _CURRENT_DECISION_SCHEMA_VERSION:
+            add(index, "invalid_schema_version")
+        if not decision_id:
+            add(index, "blank_decision_id")
+        if row_role not in _VALID_DECISION_ROLES or row_role != role:
+            add(index, "role_mismatch")
+        if not run_id or run_id not in telemetry_run_ids:
+            add(index, "run_id_not_in_telemetry")
+        if iteration is None or iteration < 0:
+            add(index, "invalid_iteration")
+        if mode not in _VALID_EXECUTION_MODES:
+            add(index, "invalid_execution_mode")
+        if event_time is None:
+            add(index, "invalid_event_time_utc")
+        if decision_time is None:
+            add(index, "invalid_decision_utc")
+        elif event_time is not None and decision_time < event_time:
+            add(index, "decision_before_event")
+        for column in _OPTIONAL_DECISION_TIMESTAMP_COLUMNS:
+            raw = row.get(column)
+            if _audit_text(raw) and _audit_timestamp(raw) is None:
+                add(index, f"invalid_optional_timestamp:{column}")
+        if action not in _KNOWN_DECISION_ACTIONS:
+            add(index, "unknown_action")
+        if disposition != action:
+            add(index, "broker_event_disposition_mismatch")
+        if duplicate is not False:
+            add(index, "persisted_duplicate_event_not_false")
+        if gap is None:
+            add(index, "invalid_gap_flag")
+        if stale is None:
+            add(index, "invalid_stale_flag")
+        if any(value not in _VALID_POSITIONS for value in (before, desired, target)):
+            add(index, "invalid_virtual_position_domain")
+        elif action in _KNOWN_DECISION_ACTIONS and not _decision_action_contract_is_valid(
+            action=action,
+            role=row_role,
+            before=before,
+            desired=desired,
+            target=target,
+        ):
+            add(index, "invalid_action_position_contract")
+        if row_role == "model_b" and any(
+            value == -1 for value in (before, desired, target)
+        ):
+            add(index, "model_b_short_exposure")
+        if row_role == "model_b" and action in _MODEL_A_ONLY_ACTIONS:
+            add(index, "model_b_model_a_only_action")
+        if row_role == "model_a" and action in _MODEL_B_ONLY_ACTIONS:
+            add(index, "model_a_model_b_only_action")
+        if action == "BLOCK_SPREAD" and mode != "live":
+            add(index, "block_spread_not_live")
+        if action == "PARTIAL_REVERSAL_FLAT" and mode != "live":
+            add(index, "partial_reversal_not_live")
+        for controlled_action, flag_column in _RISK_CONTROL_FLAG_BY_ACTION.items():
+            if action == controlled_action and _audit_bool(row.get(flag_column)) is not True:
+                add(index, f"inactive_control_flag:{flag_column}")
+        if action == "BLOCK_RECONCILIATION":
+            status = _audit_text(row.get("reconciliation_status")).upper()
+            if not status or status.startswith("PASS") or "FLAT_CONFIRMED" in status:
+                add(index, "reconciliation_block_without_nonpass_status")
+        if action in {"CONTROL_GAP_FLATTEN", "CONTROL_GAP_BLOCK"} and gap is not True:
+            add(index, "gap_control_without_gap_flag")
+        if action in {
+            "CONTROL_FRESH_START_FLATTEN",
+            "CONTROL_FRESH_START_BLOCK",
+            "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN",
+            "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK",
+            "CONTROL_MODEL_UNAVAILABLE_FLATTEN",
+            "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP",
+            "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL",
+        } and stale is not True:
+            add(index, "stale_control_without_stale_flag")
+        if action == "CLOSE_ONLY_DAILY_POLICY_CAP":
+            for column in (
+                "policy_cap_reached",
+                "entry_blocked_by_policy_cap",
+                "exit_allowed_when_capped",
+                "close_only_reversal",
+            ):
+                if _audit_bool(row.get(column)) is not True:
+                    add(index, f"invalid_policy_flag:{column}")
+        if action == "EXIT_POSITION_CAP_REACHED":
+            for column in ("policy_cap_reached", "exit_allowed_when_capped"):
+                if _audit_bool(row.get(column)) is not True:
+                    add(index, f"invalid_policy_flag:{column}")
+
+        if mode == "shadow":
+            if broker_before != 0 or broker_after != 0:
+                add(index, "shadow_broker_not_flat")
+            if any(
+                value is not False
+                for value in (
+                    order_check_called,
+                    order_check_passed,
+                    order_send_called,
+                    order_send_passed,
+                )
+            ):
+                add(index, "shadow_order_evidence_present_or_missing")
+        elif mode == "live" and before in _VALID_POSITIONS and target in _VALID_POSITIONS:
+            reconciliation_exception = action == "BLOCK_RECONCILIATION"
+            if not reconciliation_exception and broker_before != before:
+                add(index, "live_broker_before_mismatch")
+            if not reconciliation_exception and broker_after != target:
+                add(index, "live_broker_after_mismatch")
+            changes_position = target != before
+            if changes_position:
+                if any(
+                    value is not True
+                    for value in (
+                        order_check_called,
+                        order_check_passed,
+                        order_send_called,
+                        order_send_passed,
+                    )
+                ):
+                    add(index, "live_transition_missing_successful_order_flags")
+                if broker_after_execution != target:
+                    add(index, "live_transition_broker_position_after_mismatch")
+                if event_time is not None and not successful_orders.empty:
+                    expected_trigger = _expected_execution_trigger(action)
+                    candidates = successful_orders.loc[
+                        (successful_orders["_role"] == row_role)
+                        & (successful_orders["_run_id"] == run_id)
+                        & (successful_orders["_trigger"] == expected_trigger)
+                        & (successful_orders["_event_time"] == event_time)
+                    ]
+                    if expected_trigger == "STRATEGY_DECISION":
+                        candidates = candidates.loc[
+                            candidates["_decision_id"] == decision_id
+                        ]
+                    if candidates.empty:
+                        add(index, "live_transition_missing_successful_order_event")
+                else:
+                    add(index, "live_transition_missing_successful_order_event")
+            else:
+                if order_send_called is not False or order_send_passed is not False:
+                    add(index, "nontransition_order_send_evidence")
+
+    ordered_reasons = tuple(
+        f"{reason}={count}"
+        for reason, count in sorted(reason_counts.items())
+    )
+    return DecisionEvidenceValidation(
+        invalid_row_count=len(invalid_rows),
+        issue_count=int(sum(reason_counts.values())),
+        reason_counts=ordered_reasons,
+    )
+
+
 def _timestamp_series(frame: pd.DataFrame, column: str) -> pd.Series:
     if column not in frame.columns:
         return pd.Series(pd.NaT, index=frame.index, dtype="datetime64[ns, UTC]")
-    return pd.to_datetime(frame[column], utc=True, errors="coerce")
+    return pd.to_datetime(
+        frame[column], utc=True, errors="coerce", format="mixed"
+    )
 
 
 def _trade_ledger(deals: pd.DataFrame) -> pd.DataFrame:
@@ -734,7 +1201,7 @@ def _write_daily_partitions(
         return
     work = frame.copy()
     work["_timestamp_utc"] = pd.to_datetime(
-        work[timestamp_column], utc=True, errors="coerce"
+        work[timestamp_column], utc=True, errors="coerce", format="mixed"
     )
     work = work.dropna(subset=["_timestamp_utc"])
     if work.empty:
@@ -847,6 +1314,19 @@ def analyse_role(
         telemetry["snapshot_utc"], utc=True, errors="coerce"
     )
     telemetry = telemetry.sort_values("snapshot_utc_parsed")
+    telemetry_run_id_set = {
+        str(value).strip()
+        for value in telemetry.get(
+            "run_id", pd.Series(dtype="object")
+        ).dropna()
+        if str(value).strip()
+    }
+    decision_evidence_validation = _validate_decision_evidence(
+        decisions,
+        order_events,
+        role=role,
+        telemetry_run_ids=telemetry_run_id_set,
+    )
 
     completed_broker_event_ledger_present = bool(
         not completed_broker_events.empty
@@ -1430,6 +1910,10 @@ def analyse_role(
     audit_failures: list[str] = []
     for label, count in (
         ("duplicate_snapshot_ids", duplicate_snapshot_ids),
+        (
+            "decision_evidence_validation_issues",
+            decision_evidence_validation.issue_count,
+        ),
         ("duplicate_decision_ids", duplicate_decision_ids),
         ("duplicate_execution_ids", duplicate_execution_ids),
         ("duplicate_broker_deal_keys", duplicate_deal_keys),
@@ -1556,6 +2040,15 @@ def analyse_role(
     if final_pending_orders != 0:
         audit_failures.append(f"final_pending_order_count={final_pending_orders}")
     worker_error_count = int((event_types == "WORKER_ERROR").sum())
+    reconciliation_incident_count = int(
+        (event_types == "RECONCILIATION_INCIDENT").sum()
+    )
+    reconciliation_nonpass_snapshot_count = int(
+        (
+            ~reconciliations.str.startswith("PASS")
+            & ~reconciliations.str.contains("FLAT_CONFIRMED", regex=False)
+        ).sum()
+    )
     inferred_restart_count = max(
         0, int(max(run_ids.nunique(), worker_pids.nunique())) - 1
     )
@@ -1572,6 +2065,15 @@ def analyse_role(
         limited_recovery_reasons.append(
             "model_snapshot_mismatch_runtime_event_count="
             f"{model_snapshot_mismatch_runtime_event_count}"
+        )
+    if reconciliation_incident_count:
+        limited_recovery_reasons.append(
+            f"reconciliation_incident_count={reconciliation_incident_count}"
+        )
+    if reconciliation_nonpass_snapshot_count:
+        limited_recovery_reasons.append(
+            "reconciliation_nonpass_snapshot_count="
+            f"{reconciliation_nonpass_snapshot_count}"
         )
     if historical_backfill_event_count:
         limited_recovery_reasons.append(
@@ -1605,7 +2107,11 @@ def analyse_role(
         operational_acceptance_status == "PASS"
     )
     all_gate_reasons = tuple(
-        [*audit_failures, *limited_recovery_reasons]
+        [
+            *audit_failures,
+            *decision_evidence_validation.reason_counts,
+            *limited_recovery_reasons,
+        ]
     )
 
     summary = RoleObservationSummary(
@@ -1616,6 +2122,15 @@ def analyse_role(
         limited_recovery_reasons=tuple(limited_recovery_reasons),
         telemetry_rows=int(len(telemetry)),
         decision_rows=int(len(decisions)),
+        invalid_decision_evidence_count=(
+            decision_evidence_validation.invalid_row_count
+        ),
+        decision_evidence_issue_count=(
+            decision_evidence_validation.issue_count
+        ),
+        decision_evidence_issue_reasons=(
+            decision_evidence_validation.reason_counts
+        ),
         unique_completed_event_count=int(len(unique_completed_events)),
         completed_broker_event_ledger_rows=int(
             len(completed_broker_events)
@@ -1761,12 +2276,9 @@ def analyse_role(
         policy_cap_block_count=int((actions == "BLOCK_DAILY_POLICY_CAP").sum()),
         capped_exit_allowed_count=int((actions == "EXIT_POSITION_CAP_REACHED").sum()),
         close_only_reversal_count=int((actions == "CLOSE_ONLY_DAILY_POLICY_CAP").sum()),
-        reconciliation_incident_count=int(
-            (event_types == "RECONCILIATION_INCIDENT").sum()
-        ),
-        reconciliation_nonpass_snapshot_count=int(
-            (~reconciliations.str.startswith("PASS")
-             & ~reconciliations.str.contains("FLAT_CONFIRMED", regex=False)).sum()
+        reconciliation_incident_count=reconciliation_incident_count,
+        reconciliation_nonpass_snapshot_count=(
+            reconciliation_nonpass_snapshot_count
         ),
         daily_stop_trigger_count=int((event_types == "DAILY_STOP_TRIGGERED").sum()),
         total_stop_trigger_count=int((event_types == "TOTAL_STOP_TRIGGERED").sum()),
