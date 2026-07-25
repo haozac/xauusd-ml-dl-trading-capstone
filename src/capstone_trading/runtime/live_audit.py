@@ -252,10 +252,18 @@ def iso_from_epoch(
     """
 
     try:
-        if milliseconds not in (None, ""):
-            value = float(milliseconds) / 1000.0
-        elif seconds not in (None, ""):
-            value = float(seconds)
+        millisecond_value = (
+            None
+            if milliseconds in (None, "")
+            else float(milliseconds)
+        )
+        second_value = (
+            None if seconds in (None, "") else float(seconds)
+        )
+        if millisecond_value is not None and millisecond_value > 0.0:
+            value = millisecond_value / 1000.0
+        elif second_value is not None and second_value > 0.0:
+            value = second_value
         else:
             return None
         converted = datetime.fromtimestamp(value, tz=timezone.utc) - timedelta(

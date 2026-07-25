@@ -643,3 +643,95 @@ def test_material_telemetry_gap_is_limited_recovered(tmp_path: Path) -> None:
         reason.startswith("material_telemetry_gap_count=1")
         for reason in summary.limited_recovery_reasons
     )
+
+
+def test_runtime_snapshot_mismatch_prevents_clean_pass(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    runtime_events = pd.read_csv(role_root / "runtime_events.csv")
+    mismatch = runtime_events.iloc[0].copy()
+    mismatch["event_id"] = "mismatch:1"
+    mismatch["event_type"] = "MODEL_SNAPSHOT_MISMATCH"
+    mismatch["severity"] = "ERROR"
+    runtime_events = pd.concat(
+        [runtime_events, pd.DataFrame([mismatch])], ignore_index=True
+    )
+    runtime_events.to_csv(role_root / "runtime_events.csv", index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "LIMITED_RECOVERED"
+    assert summary.model_snapshot_mismatch_runtime_event_count == 1
+    assert (
+        "model_snapshot_mismatch_runtime_event_count=1"
+        in summary.limited_recovery_reasons
+    )
+
+
+def test_multiple_dispositions_for_one_broker_event_fail_gate(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions = pd.read_csv(role_root / "decisions.csv")
+    duplicate = decisions.iloc[0].copy()
+    duplicate["decision_id"] = "different-id-same-event"
+    decisions = pd.concat(
+        [decisions, pd.DataFrame([duplicate])], ignore_index=True
+    )
+    decisions.to_csv(role_root / "decisions.csv", index=False)
+
+    final_report_path = role_root / "final_report.json"
+    final_report = json.loads(final_report_path.read_text(encoding="utf-8"))
+    final_report["state"]["records_written"] = len(decisions)
+    final_report_path.write_text(
+        json.dumps(final_report), encoding="utf-8"
+    )
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "FAIL"
+    assert summary.broker_event_with_multiple_dispositions_count == 1
+    assert summary.maximum_dispositions_per_broker_event == 2
+    assert (
+        "broker_events_with_multiple_dispositions=1"
+        in summary.audit_gate_failures
+    )
+
+
+def test_current_prediction_lag_has_explicit_scope_alias(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert (
+        summary.maximum_current_broker_event_to_model_prediction_lag_minutes
+        == summary.maximum_broker_event_to_model_prediction_lag_minutes
+    )

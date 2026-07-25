@@ -774,3 +774,15 @@ def test_historical_backfill_stable_key_prevents_restart_duplicate(
     assert append_unique_rows(
         path, [replayed], fieldnames=fields, key_field="decision_id"
     ) == 0
+
+
+def test_iso_from_epoch_uses_seconds_when_milliseconds_is_zero() -> None:
+    from capstone_trading.runtime.live_audit import iso_from_epoch
+
+    assert iso_from_epoch(
+        seconds=1_700_000_000,
+        milliseconds=0,
+        server_time_offset_hours=3,
+    ) == "2023-11-14T19:13:20+00:00"
+
+    assert iso_from_epoch(seconds=0, milliseconds=0) is None

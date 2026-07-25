@@ -42,6 +42,9 @@ class RoleObservationSummary:
     model_prediction_coverage_ratio: float | None
     model_availability_status: str
     model_prediction_endpoint_mismatch_count: int
+    model_snapshot_mismatch_runtime_event_count: int
+    broker_event_with_multiple_dispositions_count: int
+    maximum_dispositions_per_broker_event: int
     contiguity_warmup_event_count: int
     historical_backfill_event_count: int
     historical_backfill_exposure_observed_count: int
@@ -49,6 +52,7 @@ class RoleObservationSummary:
     model_unavailable_exposure_after_disposition_count: int
     maximum_gap_control_processing_delay_seconds: float | None
     maximum_completed_to_decision_lag_minutes: float | None
+    maximum_current_broker_event_to_model_prediction_lag_minutes: float | None
     maximum_broker_event_to_model_prediction_lag_minutes: float | None
     stale_completed_event_count: int
     gap_decision_count: int
@@ -656,6 +660,15 @@ def analyse_role(
     unique_decision_events = pd.DatetimeIndex(
         decision_event_times.drop_duplicates().sort_values()
     )
+    decision_event_counts = decision_event_times.value_counts()
+    broker_event_with_multiple_dispositions_count = int(
+        (decision_event_counts > 1).sum()
+    )
+    maximum_dispositions_per_broker_event = (
+        0
+        if decision_event_counts.empty
+        else int(decision_event_counts.max())
+    )
     missing_completed_events = unique_completed_events.difference(
         unique_decision_events
     )
@@ -1120,6 +1133,9 @@ def analyse_role(
     event_types = runtime_events.get(
         "event_type", pd.Series(dtype="object")
     ).fillna("").astype(str)
+    model_snapshot_mismatch_runtime_event_count = int(
+        (event_types == "MODEL_SNAPSHOT_MISMATCH").sum()
+    )
     non_startup_telemetry = telemetry[
         telemetry["snapshot_phase"].fillna("").astype(str).str.upper() != "STARTUP"
     ]
@@ -1216,6 +1232,10 @@ def analyse_role(
         (
             "model_prediction_endpoint_mismatches",
             prediction_endpoint_mismatch_count,
+        ),
+        (
+            "broker_events_with_multiple_dispositions",
+            broker_event_with_multiple_dispositions_count,
         ),
         (
             "model_unavailable_exposure_after_disposition",
@@ -1325,6 +1345,11 @@ def analyse_role(
         limited_recovery_reasons.append(
             f"inferred_worker_restart_count={inferred_restart_count}"
         )
+    if model_snapshot_mismatch_runtime_event_count:
+        limited_recovery_reasons.append(
+            "model_snapshot_mismatch_runtime_event_count="
+            f"{model_snapshot_mismatch_runtime_event_count}"
+        )
     if historical_backfill_event_count:
         limited_recovery_reasons.append(
             f"historical_backfill_event_count={historical_backfill_event_count}"
@@ -1393,6 +1418,15 @@ def analyse_role(
         model_prediction_endpoint_mismatch_count=(
             prediction_endpoint_mismatch_count
         ),
+        model_snapshot_mismatch_runtime_event_count=(
+            model_snapshot_mismatch_runtime_event_count
+        ),
+        broker_event_with_multiple_dispositions_count=(
+            broker_event_with_multiple_dispositions_count
+        ),
+        maximum_dispositions_per_broker_event=(
+            maximum_dispositions_per_broker_event
+        ),
         contiguity_warmup_event_count=contiguity_warmup_event_count,
         historical_backfill_event_count=historical_backfill_event_count,
         historical_backfill_exposure_observed_count=(
@@ -1407,6 +1441,9 @@ def analyse_role(
         ),
         maximum_completed_to_decision_lag_minutes=(
             maximum_completed_to_decision_lag
+        ),
+        maximum_current_broker_event_to_model_prediction_lag_minutes=(
+            maximum_broker_event_to_model_prediction_lag
         ),
         maximum_broker_event_to_model_prediction_lag_minutes=(
             maximum_broker_event_to_model_prediction_lag

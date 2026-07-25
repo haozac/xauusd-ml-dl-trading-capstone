@@ -107,3 +107,73 @@ def test_unseen_completed_event_rows_adopts_only_latest_on_fresh_root() -> None:
     )
 
     assert list(unseen["time"].dt.strftime("%H:%M")) == ["20:45"]
+
+
+def test_wide_refetch_recalculates_latest_event_from_final_frame() -> None:
+    from capstone_trading.runtime.dual_live_worker import (
+        final_completed_event_snapshot,
+    )
+
+    calls: list[int] = []
+
+    def fake_probe(*, mt5_module, runtime_config, count):
+        del mt5_module, runtime_config
+        calls.append(count)
+        if count == 2:
+            times = [
+                "2026-07-24T10:00:00Z",
+                "2026-07-24T10:15:00Z",
+            ]
+        else:
+            times = [
+                "2026-07-24T10:00:00Z",
+                "2026-07-24T10:15:00Z",
+                "2026-07-24T10:30:00Z",
+            ]
+        return pd.DataFrame({"time": pd.to_datetime(times, utc=True)})
+
+    rows, latest, latest_iso, wide = final_completed_event_snapshot(
+        mt5_module=object(),
+        runtime_config=object(),
+        previous_event_time_utc="2026-07-24T09:30:00+00:00",
+        probe_func=fake_probe,
+    )
+
+    assert calls == [2, 1024]
+    assert wide is True
+    assert latest == pd.Timestamp("2026-07-24T10:30:00Z")
+    assert latest_iso == "2026-07-24T10:30:00+00:00"
+    assert list(rows["time"].dt.strftime("%H:%M")) == [
+        "10:00",
+        "10:15",
+        "10:30",
+    ]
+
+
+def test_records_written_reconciles_from_unique_decision_ids(
+    tmp_path,
+) -> None:
+    from capstone_trading.runtime.dual_live_state import DualLiveState
+    from capstone_trading.runtime.dual_live_worker import (
+        reconcile_records_written_from_decisions,
+    )
+
+    decisions = tmp_path / "decisions.csv"
+    decisions.write_text(
+        "decision_id,event_time_utc\n"
+        "d1,2026-07-24T10:00:00+00:00\n"
+        "d2,2026-07-24T10:15:00+00:00\n",
+        encoding="utf-8",
+    )
+    state = DualLiveState(
+        role="model_a",
+        execution_mode="live",
+        records_written=1,
+    )
+
+    reconciled, changed = reconcile_records_written_from_decisions(
+        state, decisions
+    )
+
+    assert changed is True
+    assert reconciled.records_written == 2

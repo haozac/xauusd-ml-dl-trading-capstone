@@ -77,6 +77,7 @@ from capstone_trading.runtime.live_audit import (
     TELEMETRY_FIELDS,
     append_csv_row,
     append_unique_rows,
+    existing_keys,
     broker_deal_row,
     broker_order_row,
     completed_bar_context,
@@ -444,6 +445,110 @@ def _normalised_utc_timestamp(value: Any) -> pd.Timestamp | None:
     if parsed.tzinfo is None:
         return parsed.tz_localize("UTC")
     return parsed.tz_convert("UTC")
+
+
+def normalise_completed_event_rows(
+    completed_rows: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.Timestamp, str]:
+    """Canonicalise one final broker snapshot before event classification.
+
+    The worker may replace a small probe with a wider outage-recovery probe.
+    Every downstream cursor, ledger, backfill, bar-context, and inference
+    decision must therefore be derived only after the final chosen frame has
+    been sorted and deduplicated.
+    """
+
+    if completed_rows.empty or "time" not in completed_rows.columns:
+        raise DualLiveWorkerError(
+            "Completed broker rows are empty or lack time"
+        )
+    work = completed_rows.copy()
+    work["time"] = pd.to_datetime(
+        work["time"], utc=True, errors="raise"
+    )
+    work = (
+        work.drop_duplicates(subset=["time"], keep="last")
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
+    if work.empty:
+        raise DualLiveWorkerError(
+            "No valid completed broker rows remain after normalisation"
+        )
+    latest_timestamp = pd.Timestamp(work["time"].iloc[-1])
+    return work, latest_timestamp, latest_timestamp.isoformat()
+
+
+def final_completed_event_snapshot(
+    *,
+    mt5_module: Any,
+    runtime_config: Any,
+    previous_event_time_utc: str | None,
+    probe_func: Any | None = None,
+) -> tuple[pd.DataFrame, pd.Timestamp, str, bool]:
+    """Return the final coherent broker frame and its true latest event.
+
+    A small probe is normally sufficient.  When the persisted cursor reveals a
+    gap, the wider refetch becomes authoritative and the latest timestamp is
+    recalculated from that wider frame before any row is classified.
+    """
+
+    probe = probe_completed_event_rows if probe_func is None else probe_func
+    completed_rows = probe(
+        mt5_module=mt5_module,
+        runtime_config=runtime_config,
+        count=2,
+    )
+    completed_rows, latest_timestamp, latest_event_time = (
+        normalise_completed_event_rows(completed_rows)
+    )
+    previous_timestamp = _normalised_utc_timestamp(
+        previous_event_time_utc
+    )
+    wide_refetch_used = bool(
+        previous_timestamp is not None
+        and latest_timestamp - previous_timestamp
+        > pd.Timedelta(minutes=15)
+    )
+    if wide_refetch_used:
+        completed_rows = probe(
+            mt5_module=mt5_module,
+            runtime_config=runtime_config,
+            count=1024,
+        )
+        completed_rows, latest_timestamp, latest_event_time = (
+            normalise_completed_event_rows(completed_rows)
+        )
+    return (
+        completed_rows,
+        latest_timestamp,
+        latest_event_time,
+        wide_refetch_used,
+    )
+
+
+def reconcile_records_written_from_decisions(
+    state: DualLiveState,
+    decisions_csv: Path,
+) -> tuple[DualLiveState, bool]:
+    """Make the append-only decision ledger authoritative after recovery.
+
+    CSV and JSON cannot be one filesystem transaction.  If a process exits
+    after appending a unique decision but before persisting state, the next
+    worker generation repairs ``records_written`` from unique decision IDs.
+    """
+
+    actual_count = len(existing_keys(decisions_csv, "decision_id"))
+    if actual_count == int(state.records_written):
+        return state, False
+    return (
+        replace(
+            state,
+            records_written=actual_count,
+            updated_utc=utc_now_iso(),
+        ),
+        True,
+    )
 
 
 def model_snapshot_coherence(
@@ -937,6 +1042,7 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
         execution_mode=settings.execution_mode,
         worker_pid=os.getpid(),
     )
+    records_written_reconciled = False
     decisions: list[StrategyDecision] = []
     last_decision: StrategyDecision | None = None
     _heartbeat(
@@ -949,6 +1055,13 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
         last_decision=None,
     )
     try:
+        state, records_written_reconciled = (
+            reconcile_records_written_from_decisions(
+                state, settings.paths.decisions_csv
+            )
+        )
+        if records_written_reconciled:
+            write_state(settings.paths.state, state)
         _write_runtime_event(
             settings,
             run_id=run_id,
@@ -958,6 +1071,22 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             severity="INFO",
             state=state,
         )
+        if records_written_reconciled:
+            _write_runtime_event(
+                settings,
+                run_id=run_id,
+                iteration=0,
+                event_type="STATE_RECORD_COUNT_RECONCILED",
+                event_reason=(
+                    "decision_csv_is_authoritative_after_restart"
+                ),
+                severity="WARNING",
+                state=state,
+                details={
+                    "records_written": state.records_written,
+                    "decision_id_count": state.records_written,
+                },
+            )
         config_a_path = safe_repository_path(
             settings.repo_root,
             settings.model_a_config,
@@ -1181,42 +1310,16 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             # CNN-LSTM only when a new completed M15 event is available.  A first
             # inference is deliberately performed after every worker start so the
             # process owns a fresh in-memory signal before restart reconciliation.
-            completed_event_rows = probe_completed_event_rows(
+            (
+                completed_event_rows,
+                latest_completed_timestamp,
+                latest_completed_event_time,
+                wide_refetch_used,
+            ) = final_completed_event_snapshot(
                 mt5_module=mt5_module,
                 runtime_config=runtime_config,
-                count=2,
+                previous_event_time_utc=state.last_event_time_utc,
             )
-            latest_completed_timestamp = pd.Timestamp(
-                completed_event_rows["time"].iloc[-1]
-            )
-            latest_completed_event_time = (
-                latest_completed_timestamp.isoformat()
-            )
-            previous_completed_timestamp = (
-                None
-                if state.last_event_time_utc in (None, "")
-                else pd.Timestamp(state.last_event_time_utc)
-            )
-            if previous_completed_timestamp is not None:
-                if previous_completed_timestamp.tzinfo is None:
-                    previous_completed_timestamp = (
-                        previous_completed_timestamp.tz_localize("UTC")
-                    )
-                else:
-                    previous_completed_timestamp = (
-                        previous_completed_timestamp.tz_convert("UTC")
-                    )
-            if (
-                previous_completed_timestamp is not None
-                and latest_completed_timestamp
-                - previous_completed_timestamp
-                > pd.Timedelta(minutes=15)
-            ):
-                completed_event_rows = probe_completed_event_rows(
-                    mt5_module=mt5_module,
-                    runtime_config=runtime_config,
-                    count=1024,
-                )
             historical_backfill_rows = historical_unseen_event_rows(
                 completed_event_rows,
                 previous_event_time_utc=state.last_event_time_utc,
