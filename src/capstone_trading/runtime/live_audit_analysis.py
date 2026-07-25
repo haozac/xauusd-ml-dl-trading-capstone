@@ -44,6 +44,8 @@ class RoleObservationSummary:
     model_prediction_endpoint_mismatch_count: int
     model_snapshot_mismatch_runtime_event_count: int
     broker_event_with_multiple_dispositions_count: int
+    allowed_same_event_safety_override_count: int
+    unexpected_multiple_disposition_event_count: int
     maximum_dispositions_per_broker_event: int
     contiguity_warmup_event_count: int
     historical_backfill_event_count: int
@@ -269,6 +271,167 @@ def _duplicate_count(frame: pd.DataFrame, key: str) -> int:
 def _ticket_set(frame: pd.DataFrame, column: str) -> set[int]:
     values = _numeric(frame, column).dropna()
     return {int(value) for value in values if int(value) != 0}
+
+
+_ALLOWED_SAME_EVENT_FLATTEN_ACTIONS = frozenset(
+    {
+        "KILL_SWITCH_FLATTEN",
+        "TOTAL_STOP_FLATTEN",
+        "DAILY_STOP_FLATTEN",
+        "SESSION_GAP_LOCKOUT_FLATTEN",
+    }
+)
+_HISTORICAL_BACKFILL_ACTION = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+
+
+def _same_event_disposition_counts(
+    decisions: pd.DataFrame,
+) -> tuple[int, int, int, int]:
+    """Classify multiple decisions sharing one completed broker event.
+
+    One later safety-control flatten is legitimate when it closes exposure on
+    an already-processed event between bar completions.  All other repeated
+    dispositions remain audit failures.
+    """
+
+    if decisions.empty or "event_time_utc" not in decisions.columns:
+        return 0, 0, 0, 0
+
+    work = decisions.copy()
+    work["_event_time"] = pd.to_datetime(
+        work["event_time_utc"],
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    work = work.dropna(subset=["_event_time"])
+    if work.empty:
+        return 0, 0, 0, 0
+
+    work["_decision_time"] = pd.to_datetime(
+        work.get(
+            "decision_utc",
+            pd.Series(index=work.index, dtype="object"),
+        ),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    work["_decision_id"] = (
+        work.get(
+            "decision_id",
+            pd.Series("", index=work.index, dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+    )
+    work["_action"] = (
+        work.get(
+            "action",
+            pd.Series("", index=work.index, dtype="object"),
+        )
+        .fillna("")
+        .astype(str)
+        .str.upper()
+    )
+    work["_position_before"] = pd.to_numeric(
+        work.get(
+            "position_before",
+            pd.Series(index=work.index, dtype="float64"),
+        ),
+        errors="coerce",
+    )
+    work["_target_position"] = pd.to_numeric(
+        work.get(
+            "target_position",
+            pd.Series(index=work.index, dtype="float64"),
+        ),
+        errors="coerce",
+    )
+    work["_broker_after"] = pd.to_numeric(
+        work.get(
+            "broker_position_after_inspection",
+            pd.Series(index=work.index, dtype="float64"),
+        ),
+        errors="coerce",
+    )
+
+    multiple_event_count = 0
+    allowed_override_count = 0
+    unexpected_event_count = 0
+    maximum_dispositions = 0
+
+    for _, group in work.groupby("_event_time", sort=True):
+        count = int(len(group))
+        maximum_dispositions = max(maximum_dispositions, count)
+        if count <= 1:
+            continue
+
+        multiple_event_count += 1
+        if count != 2:
+            unexpected_event_count += 1
+            continue
+
+        ordered = group.sort_values(
+            ["_decision_time"],
+            kind="stable",
+            na_position="last",
+        )
+        first = ordered.iloc[0]
+        later = ordered.iloc[1]
+
+        ids_are_distinct = bool(
+            first["_decision_id"]
+            and later["_decision_id"]
+            and first["_decision_id"] != later["_decision_id"]
+        )
+        times_are_ordered = bool(
+            pd.notna(first["_decision_time"])
+            and pd.notna(later["_decision_time"])
+            and later["_decision_time"] > first["_decision_time"]
+        )
+        recognised_later_flatten = bool(
+            later["_action"] in _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS
+        )
+        first_is_ordinary = bool(
+            first["_action"] != _HISTORICAL_BACKFILL_ACTION
+            and first["_action"] not in _ALLOWED_SAME_EVENT_FLATTEN_ACTIONS
+        )
+        no_backfill_collision = bool(
+            later["_action"] != _HISTORICAL_BACKFILL_ACTION
+        )
+        closes_existing_exposure = bool(
+            pd.notna(later["_position_before"])
+            and float(later["_position_before"]) != 0.0
+            and pd.notna(later["_target_position"])
+            and float(later["_target_position"]) == 0.0
+        )
+        broker_flat_when_recorded = bool(
+            pd.isna(later["_broker_after"])
+            or float(later["_broker_after"]) == 0.0
+        )
+
+        if all(
+            (
+                ids_are_distinct,
+                times_are_ordered,
+                recognised_later_flatten,
+                first_is_ordinary,
+                no_backfill_collision,
+                closes_existing_exposure,
+                broker_flat_when_recorded,
+            )
+        ):
+            allowed_override_count += 1
+        else:
+            unexpected_event_count += 1
+
+    return (
+        multiple_event_count,
+        allowed_override_count,
+        unexpected_event_count,
+        maximum_dispositions,
+    )
 
 
 def _timestamp_series(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -660,15 +823,12 @@ def analyse_role(
     unique_decision_events = pd.DatetimeIndex(
         decision_event_times.drop_duplicates().sort_values()
     )
-    decision_event_counts = decision_event_times.value_counts()
-    broker_event_with_multiple_dispositions_count = int(
-        (decision_event_counts > 1).sum()
-    )
-    maximum_dispositions_per_broker_event = (
-        0
-        if decision_event_counts.empty
-        else int(decision_event_counts.max())
-    )
+    (
+        broker_event_with_multiple_dispositions_count,
+        allowed_same_event_safety_override_count,
+        unexpected_multiple_disposition_event_count,
+        maximum_dispositions_per_broker_event,
+    ) = _same_event_disposition_counts(decisions)
     missing_completed_events = unique_completed_events.difference(
         unique_decision_events
     )
@@ -1234,8 +1394,8 @@ def analyse_role(
             prediction_endpoint_mismatch_count,
         ),
         (
-            "broker_events_with_multiple_dispositions",
-            broker_event_with_multiple_dispositions_count,
+            "unexpected_multiple_disposition_events",
+            unexpected_multiple_disposition_event_count,
         ),
         (
             "model_unavailable_exposure_after_disposition",
@@ -1423,6 +1583,12 @@ def analyse_role(
         ),
         broker_event_with_multiple_dispositions_count=(
             broker_event_with_multiple_dispositions_count
+        ),
+        allowed_same_event_safety_override_count=(
+            allowed_same_event_safety_override_count
+        ),
+        unexpected_multiple_disposition_event_count=(
+            unexpected_multiple_disposition_event_count
         ),
         maximum_dispositions_per_broker_event=(
             maximum_dispositions_per_broker_event
