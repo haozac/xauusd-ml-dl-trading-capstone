@@ -692,3 +692,49 @@ def test_historical_unseen_event_times_excludes_latest_current_event() -> None:
         "2026-07-24T10:15:00+00:00",
         "2026-07-24T10:30:00+00:00",
     )
+
+
+def test_model_snapshot_mismatch_blocks_flat_strategy_entry() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        last_event_time_utc="2026-07-24T09:45:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="snapshot-race",
+        iteration=1,
+        event_time_utc="2026-07-24T10:00:00+00:00",
+        probability_up=None,
+        stale_event_warning=True,
+        model_snapshot_mismatch=True,
+        reconciliation_blocked=False,
+    )
+
+    assert decision.action == "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK"
+    assert decision.target_position == 0
+    assert decision.probability_up is None
+
+
+def test_model_snapshot_mismatch_flattens_existing_exposure() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        virtual_position=1,
+        broker_position=1,
+        last_event_time_utc="2026-07-24T09:45:00+00:00",
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="snapshot-race",
+        iteration=1,
+        event_time_utc="2026-07-24T10:00:00+00:00",
+        probability_up=None,
+        stale_event_warning=True,
+        model_snapshot_mismatch=True,
+        reconciliation_blocked=False,
+    )
+
+    assert decision.action == "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN"
+    assert decision.target_position == 0
+    assert decision.probability_up is None

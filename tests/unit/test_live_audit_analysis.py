@@ -11,6 +11,32 @@ from capstone_trading.runtime.live_audit_analysis import (
 )
 
 
+def write_broker_event_ledger(
+    role_root: Path,
+    role: str,
+    events: list[object] | pd.DatetimeIndex,
+) -> None:
+    parsed = pd.to_datetime(list(events), utc=True)
+    pd.DataFrame(
+        {
+            "broker_event_key": [
+                f"BROKER_EVENT:{role}:{item.isoformat()}"
+                for item in parsed
+            ],
+            "role": [role] * len(parsed),
+            "event_time_utc": parsed,
+            "first_observed_utc": parsed,
+            "observation_type": ["CURRENT_COMPLETED_EVENT"] * len(parsed),
+            "run_id": [f"dual_{role}_test"] * len(parsed),
+            "iteration": list(range(1, len(parsed) + 1)),
+            "worker_pid": [1234] * len(parsed),
+            "is_latest_current_event": [True] * len(parsed),
+            "is_historical_recovered_event": [False] * len(parsed),
+            "source_fetch_count": [2] * len(parsed),
+        }
+    ).to_csv(role_root / "completed_broker_events.csv", index=False)
+
+
 def write_role(root: Path, role: str, equity: list[float]) -> None:
     role_root = root / role
     role_root.mkdir(parents=True)
@@ -44,6 +70,7 @@ def write_role(root: Path, role: str, equity: list[float]) -> None:
             "action": ["ENTER_LONG"] + ["HOLD_LONG"] * (len(equity) - 1),
         }
     ).to_csv(role_root / "decisions.csv", index=False)
+    write_broker_event_ledger(role_root, role, times)
     (role_root / "final_report.json").write_text(
         json.dumps(
             {
@@ -103,6 +130,9 @@ def write_completed_trade(role_root: Path, *, include_unlinked_order: bool = Fal
             "action": ["ENTER_LONG", "EXIT_POSITION"],
         }
     ).to_csv(role_root / "decisions.csv", index=False)
+    write_broker_event_ledger(
+        role_root, "model_a", [times[0], times[-1]]
+    )
     pd.DataFrame(
         {
             "execution_id": ["e-entry", "e-exit"],
@@ -255,15 +285,26 @@ def test_completed_broker_events_without_decisions_fail_gate(tmp_path: Path) -> 
     output = tmp_path / "report"
     write_completed_trade(role_root)
 
-    telemetry_path = role_root / "telemetry.csv"
-    telemetry = pd.read_csv(telemetry_path)
-    telemetry.loc[1, "latest_completed_event_time_utc"] = (
-        "2026-07-24T00:00:30+00:00"
+    ledger_path = role_root / "completed_broker_events.csv"
+    ledger = pd.read_csv(ledger_path)
+    missing_event = {
+        "broker_event_key": "BROKER_EVENT:model_a:2026-07-24T00:00:30Z",
+        "role": "model_a",
+        "event_time_utc": "2026-07-24T00:00:30+00:00",
+        "first_observed_utc": "2026-07-24T00:00:31+00:00",
+        "observation_type": "CURRENT_COMPLETED_EVENT",
+        "run_id": "run-1",
+        "iteration": 2,
+        "worker_pid": 100,
+        "is_latest_current_event": True,
+        "is_historical_recovered_event": False,
+        "source_fetch_count": 2,
+    }
+    ledger = pd.concat(
+        [ledger, pd.DataFrame([missing_event])],
+        ignore_index=True,
     )
-    telemetry.loc[1, "latest_decision_event_time_utc"] = (
-        "2026-07-24T00:00:00+00:00"
-    )
-    telemetry.to_csv(telemetry_path, index=False)
+    ledger.to_csv(ledger_path, index=False)
 
     summary = analyse_role(
         role_root,
@@ -320,6 +361,10 @@ def test_model_availability_is_reported_separately_from_disposition_coverage(
     decisions["model_prediction_event_time_utc"] = [
         decisions.loc[0, "event_time_utc"],
         decisions.loc[0, "event_time_utc"],
+    ]
+    decisions["latest_completed_bar_time_utc"] = [
+        decisions.loc[0, "event_time_utc"],
+        decisions.loc[1, "event_time_utc"],
     ]
     decisions["stale_event_warning"] = [False, True]
     decisions["action"] = [
@@ -401,6 +446,7 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
                     events, prediction_available, strict=True
                 )
             ],
+            "latest_completed_bar_time_utc": events,
             "probability_up": [0.51] * 31 + [None] * 47,
             "stale_event_warning": [False] * 31 + [True] * 47,
             "action": (
@@ -412,6 +458,7 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
             "broker_position_after_inspection": [0] * 78,
         }
     ).to_csv(role_root / "decisions.csv", index=False)
+    write_broker_event_ledger(role_root, "model_a", events)
 
     (role_root / "final_report.json").write_text(
         json.dumps(
@@ -449,4 +496,150 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
     assert (
         summary.maximum_broker_event_to_model_prediction_lag_minutes
         == 47 * 15
+    )
+
+
+def test_nonstale_endpoint_mismatch_fails_when_prediction_was_suppressed(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_role(role_root.parent, "model_a", [10000.0, 10000.0, 10000.0])
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions["model_prediction_available"] = [False, True, True]
+    decisions["model_prediction_event_time_utc"] = [
+        "2026-07-24T00:15:00+00:00",
+        decisions.loc[1, "event_time_utc"],
+        decisions.loc[2, "event_time_utc"],
+    ]
+    decisions["latest_completed_bar_time_utc"] = [
+        "2026-07-24T00:15:00+00:00",
+        decisions.loc[1, "event_time_utc"],
+        decisions.loc[2, "event_time_utc"],
+    ]
+    decisions["stale_event_warning"] = [True, False, False]
+    decisions.loc[0, "action"] = "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK"
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "FAIL"
+    assert summary.model_prediction_endpoint_mismatch_count == 1
+    assert "model_prediction_endpoint_mismatches=1" in summary.audit_gate_failures
+
+
+def test_missing_completed_broker_event_ledger_fails_gate(
+    tmp_path: Path,
+) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+    (role_root / "completed_broker_events.csv").unlink()
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.completed_broker_event_ledger_present is False
+    assert "completed_broker_event_ledger_missing=1" in summary.audit_gate_failures
+
+
+def test_historical_backfill_exposure_is_hard_failure(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions["model_prediction_available"] = [True, False]
+    decisions["stale_event_warning"] = [False, True]
+    decisions.loc[1, "action"] = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+    decisions["target_position"] = [1, 1]
+    decisions["broker_position_after_inspection"] = [1, 1]
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "FAIL"
+    assert summary.historical_backfill_exposure_observed_count == 1
+    assert (
+        "historical_backfill_exposure_observed=1"
+        in summary.audit_gate_failures
+    )
+
+
+def test_safe_historical_backfill_is_limited_recovered(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    output = tmp_path / "report"
+    write_role(runtime, "model_a", [10000.0, 10000.0, 10000.0])
+    role_root = runtime / "model_a"
+
+    decisions_path = role_root / "decisions.csv"
+    decisions = pd.read_csv(decisions_path)
+    decisions["model_prediction_available"] = [True, False, True]
+    decisions["stale_event_warning"] = [False, True, False]
+    decisions.loc[1, "action"] = "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+    decisions["target_position"] = [0, 0, 0]
+    decisions["broker_position_after_inspection"] = [0, 0, 0]
+    decisions.to_csv(decisions_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=86400,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "LIMITED_RECOVERED"
+    assert summary.historical_backfill_event_count == 1
+    assert summary.historical_backfill_exposure_observed_count == 0
+    assert "historical_backfill_event_count=1" in summary.limited_recovery_reasons
+
+
+def test_material_telemetry_gap_is_limited_recovered(tmp_path: Path) -> None:
+    role_root = tmp_path / "runtime" / "model_a"
+    output = tmp_path / "report"
+    write_completed_trade(role_root)
+
+    telemetry_path = role_root / "telemetry.csv"
+    telemetry = pd.read_csv(telemetry_path)
+    telemetry["snapshot_utc"] = [
+        "2026-07-24T00:00:00+00:00",
+        "2026-07-24T00:00:30+00:00",
+        "2026-07-24T00:03:00+00:00",
+    ]
+    telemetry.to_csv(telemetry_path, index=False)
+
+    summary = analyse_role(
+        role_root,
+        role="model_a",
+        output_root=output,
+        expected_poll_seconds=30,
+    )
+
+    assert summary.formal_audit_gate is False
+    assert summary.operational_acceptance_status == "LIMITED_RECOVERED"
+    assert summary.telemetry_gap_count_over_threshold == 1
+    assert any(
+        reason.startswith("material_telemetry_gap_count=1")
+        for reason in summary.limited_recovery_reasons
     )

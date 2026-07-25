@@ -903,6 +903,7 @@ def decide_strategy_transition(
     event_time_utc: str | None,
     probability_up: float | None,
     stale_event_warning: bool,
+    model_snapshot_mismatch: bool = False,
     reconciliation_blocked: bool,
     reconciliation_reason: str = "",
     session_gap_lockout_active: bool = False,
@@ -1092,6 +1093,26 @@ def decide_strategy_transition(
             duplicate=False,
             gap=True,
             stale=stale_event_warning,
+        )
+    if model_snapshot_mismatch:
+        return _decision(
+            state=state,
+            rules=rules,
+            run_id=run_id,
+            iteration=iteration,
+            event_time_utc=event_time_utc,
+            probability_up=None,
+            desired=0,
+            target=0,
+            action=(
+                "CONTROL_MODEL_SNAPSHOT_MISMATCH_FLATTEN"
+                if current != 0
+                else "CONTROL_MODEL_SNAPSHOT_MISMATCH_BLOCK"
+            ),
+            reason="broker_and_model_completed_event_endpoints_differ",
+            duplicate=False,
+            gap=False,
+            stale=True,
         )
     if stale_event_warning:
         return _decision(

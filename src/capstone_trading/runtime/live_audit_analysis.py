@@ -24,10 +24,16 @@ class LiveAuditAnalysisError(RuntimeError):
 class RoleObservationSummary:
     role: str
     formal_audit_gate: bool
+    operational_acceptance_status: str
     audit_gate_failures: tuple[str, ...]
+    limited_recovery_reasons: tuple[str, ...]
     telemetry_rows: int
     decision_rows: int
     unique_completed_event_count: int
+    completed_broker_event_ledger_rows: int
+    completed_broker_event_ledger_present: bool
+    duplicate_broker_event_key_count: int
+    decision_without_broker_event_count: int
     broker_event_disposition_coverage_ratio: float | None
     completed_event_coverage_ratio: float | None
     missing_completed_event_decision_count: int
@@ -597,6 +603,9 @@ def analyse_role(
         source=f"{role}/telemetry.csv",
     )
     decisions = _read_optional(role_root / "decisions.csv")
+    completed_broker_events = _read_optional(
+        role_root / "completed_broker_events.csv"
+    )
     order_events = _read_optional(role_root / "order_events.csv")
     deals = _read_optional(role_root / "broker_deals.csv")
     orders = _read_optional(role_root / "broker_orders.csv")
@@ -609,56 +618,49 @@ def analyse_role(
     )
     telemetry = telemetry.sort_values("snapshot_utc_parsed")
 
-    completed_event_times = pd.to_datetime(
-        telemetry.get(
-            "latest_completed_event_time_utc", pd.Series(dtype="object")
-        ),
-        utc=True,
-        errors="coerce",
-        format="mixed",
-    ).dropna()
+    completed_broker_event_ledger_present = bool(
+        not completed_broker_events.empty
+    )
+    if completed_broker_event_ledger_present:
+        _require_columns(
+            completed_broker_events,
+            ("broker_event_key", "event_time_utc", "role"),
+            source=f"{role}/completed_broker_events.csv",
+        )
+        ledger_event_times = pd.to_datetime(
+            completed_broker_events["event_time_utc"],
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        ).dropna()
+        duplicate_broker_event_key_count = int(
+            completed_broker_events["broker_event_key"]
+            .fillna("")
+            .astype(str)
+            .duplicated()
+            .sum()
+        )
+    else:
+        ledger_event_times = pd.Series(dtype="datetime64[ns, UTC]")
+        duplicate_broker_event_key_count = 0
+
     decision_event_times = pd.to_datetime(
         decisions.get("event_time_utc", pd.Series(dtype="object")),
         utc=True,
         errors="coerce",
         format="mixed",
     ).dropna()
-    disposition_for_inventory = decisions.get(
-        "broker_event_disposition",
-        decisions.get(
-            "action", pd.Series("", index=decisions.index, dtype="object")
-        ),
-    ).fillna("").astype(str)
-    backfill_event_times = pd.to_datetime(
-        decisions.loc[
-            disposition_for_inventory.eq(
-                "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
-            ),
-            "event_time_utc",
-        ]
-        if "event_time_utc" in decisions.columns
-        else pd.Series(dtype="object"),
-        utc=True,
-        errors="coerce",
-        format="mixed",
-    ).dropna()
     unique_completed_events = pd.DatetimeIndex(
-        pd.concat(
-            [
-                pd.Series(completed_event_times),
-                pd.Series(backfill_event_times),
-            ],
-            ignore_index=True,
-        )
-        .dropna()
-        .drop_duplicates()
-        .sort_values()
+        ledger_event_times.drop_duplicates().sort_values()
     )
     unique_decision_events = pd.DatetimeIndex(
         decision_event_times.drop_duplicates().sort_values()
     )
     missing_completed_events = unique_completed_events.difference(
         unique_decision_events
+    )
+    decision_events_without_broker_event = unique_decision_events.difference(
+        unique_completed_events
     )
     broker_event_disposition_coverage_ratio = (
         None
@@ -671,11 +673,19 @@ def analyse_role(
     # Backward-compatible alias retained for existing reports.
     completed_event_coverage_ratio = broker_event_disposition_coverage_ratio
 
-    decision_stale = _boolean(decisions, "stale_event_warning").fillna(False)
+    decision_stale = (
+        _boolean(decisions, "stale_event_warning")
+        .reindex(decisions.index)
+        .fillna(False)
+        .astype(bool)
+    )
     if "model_prediction_available" in decisions.columns:
-        prediction_available = _boolean(
-            decisions, "model_prediction_available"
-        ).fillna(False)
+        prediction_available = (
+            _boolean(decisions, "model_prediction_available")
+            .reindex(decisions.index)
+            .fillna(False)
+            .astype(bool)
+        )
     elif "probability_up" in decisions.columns:
         prediction_available = (
             pd.to_numeric(decisions["probability_up"], errors="coerce").notna()
@@ -716,31 +726,60 @@ def analyse_role(
         model_availability_status = "UNAVAILABLE"
 
     prediction_endpoint_mismatch_count = 0
-    if {
-        "model_prediction_event_time_utc",
-        "event_time_utc",
-    }.issubset(decisions.columns):
-        prediction_endpoint = pd.to_datetime(
-            decisions["model_prediction_event_time_utc"],
-            utc=True,
-            errors="coerce",
-            format="mixed",
-        )
+    if "event_time_utc" in decisions.columns:
         disposition_event = pd.to_datetime(
             decisions["event_time_utc"],
             utc=True,
             errors="coerce",
             format="mixed",
         )
+        prediction_endpoint = pd.to_datetime(
+            decisions.get(
+                "model_prediction_event_time_utc",
+                pd.Series(index=decisions.index, dtype="object"),
+            ),
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+        signal_latest_completed = pd.to_datetime(
+            decisions.get(
+                "latest_completed_bar_time_utc",
+                pd.Series(index=decisions.index, dtype="object"),
+            ),
+            utc=True,
+            errors="coerce",
+            format="mixed",
+        )
+        mismatch_control_rows = (
+            decisions.get(
+                "action",
+                pd.Series("", index=decisions.index, dtype="object"),
+            )
+            .fillna("")
+            .astype(str)
+            .str.startswith("CONTROL_MODEL_SNAPSHOT_MISMATCH")
+        )
+        endpoint_mismatch_must_be_counted = (
+            (~decision_stale) | mismatch_control_rows
+        )
+        raw_endpoint_present = (
+            prediction_endpoint.notna()
+            | signal_latest_completed.notna()
+        )
+        unexpected_endpoint_mismatch = (
+            endpoint_mismatch_must_be_counted
+            & raw_endpoint_present
+            & (
+                disposition_event.isna()
+                | prediction_endpoint.isna()
+                | signal_latest_completed.isna()
+                | (prediction_endpoint != disposition_event)
+                | (signal_latest_completed != disposition_event)
+            )
+        )
         prediction_endpoint_mismatch_count = int(
-            (
-                prediction_available
-                & (
-                    prediction_endpoint.isna()
-                    | disposition_event.isna()
-                    | (prediction_endpoint != disposition_event)
-                )
-            ).sum()
+            unexpected_endpoint_mismatch.sum()
         )
 
     action_series = decisions.get(
@@ -1156,6 +1195,14 @@ def analyse_role(
         ("duplicate_execution_ids", duplicate_execution_ids),
         ("duplicate_broker_deal_keys", duplicate_deal_keys),
         ("duplicate_broker_order_keys", duplicate_order_keys),
+        (
+            "duplicate_completed_broker_event_keys",
+            duplicate_broker_event_key_count,
+        ),
+        (
+            "decisions_without_broker_event_ledger_entry",
+            len(decision_events_without_broker_event),
+        ),
         ("successful_orders_missing_order_ticket", missing_order_ticket_count),
         ("missing_broker_order_links", len(missing_broker_orders)),
         ("missing_broker_deal_links", len(missing_broker_deals)),
@@ -1179,6 +1226,10 @@ def analyse_role(
             historical_backfill_order_count,
         ),
         (
+            "historical_backfill_exposure_observed",
+            historical_backfill_exposure_observed_count,
+        ),
+        (
             "strategy_executions_missing_decision_link",
             strategy_execution_missing_decision_link_count,
         ),
@@ -1190,15 +1241,17 @@ def analyse_role(
     ):
         if count:
             audit_failures.append(f"{label}={count}")
+    if not completed_broker_event_ledger_present:
+        audit_failures.append("completed_broker_event_ledger_missing=1")
     if initial_broker_position != 0:
         audit_failures.append(f"initial_broker_position={initial_broker_position}")
     if initial_pending_orders != 0:
         audit_failures.append(
             f"initial_pending_order_count={initial_pending_orders}"
         )
-    if coverage_ratio is not None and coverage_ratio < 0.90:
+    if coverage_ratio is not None and coverage_ratio < 0.99:
         audit_failures.append(
-            f"telemetry_coverage_ratio={coverage_ratio:.6f}<0.90"
+            f"telemetry_coverage_ratio={coverage_ratio:.6f}<0.99"
         )
     if (
         completed_event_coverage_ratio is not None
@@ -1260,27 +1313,74 @@ def analyse_role(
     if final_pending_orders != 0:
         audit_failures.append(f"final_pending_order_count={final_pending_orders}")
     worker_error_count = int((event_types == "WORKER_ERROR").sum())
-    if worker_error_count:
-        audit_failures.append(f"worker_error_count={worker_error_count}")
     inferred_restart_count = max(
         0, int(max(run_ids.nunique(), worker_pids.nunique())) - 1
     )
+    limited_recovery_reasons: list[str] = []
+    if worker_error_count:
+        limited_recovery_reasons.append(
+            f"worker_error_count={worker_error_count}"
+        )
     if inferred_restart_count:
-        audit_failures.append(
+        limited_recovery_reasons.append(
             f"inferred_worker_restart_count={inferred_restart_count}"
         )
+    if historical_backfill_event_count:
+        limited_recovery_reasons.append(
+            f"historical_backfill_event_count={historical_backfill_event_count}"
+        )
+    if gap_count:
+        limited_recovery_reasons.append(
+            f"material_telemetry_gap_count={gap_count}"
+        )
+    if coverage_ratio is not None and coverage_ratio < 0.99:
+        # Coverage shortfall is recoverable only when the independent broker
+        # event ledger and all dispositions remain complete.
+        coverage_failure = (
+            f"telemetry_coverage_ratio={coverage_ratio:.6f}<0.99"
+        )
+        if coverage_failure in audit_failures:
+            audit_failures.remove(coverage_failure)
+        limited_recovery_reasons.append(coverage_failure)
     if final_status != "PASS" or final_formal_gate is not True:
         audit_failures.append(
             f"final_worker_gate=status:{final_status},formal_gate:{final_formal_gate}"
         )
 
+    if audit_failures:
+        operational_acceptance_status = "FAIL"
+    elif limited_recovery_reasons:
+        operational_acceptance_status = "LIMITED_RECOVERED"
+    else:
+        operational_acceptance_status = "PASS"
+    formal_audit_gate = bool(
+        operational_acceptance_status == "PASS"
+    )
+    all_gate_reasons = tuple(
+        [*audit_failures, *limited_recovery_reasons]
+    )
+
     summary = RoleObservationSummary(
         role=role,
-        formal_audit_gate=not audit_failures,
-        audit_gate_failures=tuple(audit_failures),
+        formal_audit_gate=formal_audit_gate,
+        operational_acceptance_status=operational_acceptance_status,
+        audit_gate_failures=all_gate_reasons,
+        limited_recovery_reasons=tuple(limited_recovery_reasons),
         telemetry_rows=int(len(telemetry)),
         decision_rows=int(len(decisions)),
         unique_completed_event_count=int(len(unique_completed_events)),
+        completed_broker_event_ledger_rows=int(
+            len(completed_broker_events)
+        ),
+        completed_broker_event_ledger_present=(
+            completed_broker_event_ledger_present
+        ),
+        duplicate_broker_event_key_count=(
+            duplicate_broker_event_key_count
+        ),
+        decision_without_broker_event_count=int(
+            len(decision_events_without_broker_event)
+        ),
         broker_event_disposition_coverage_ratio=(
             broker_event_disposition_coverage_ratio
         ),
@@ -1460,7 +1560,13 @@ def analyse_role(
             {
                 "role": role,
                 "formal_audit_gate": summary.formal_audit_gate,
+                "operational_acceptance_status": (
+                    summary.operational_acceptance_status
+                ),
                 "failures": list(summary.audit_gate_failures),
+                "limited_recovery_reasons": list(
+                    summary.limited_recovery_reasons
+                ),
                 "missing_broker_order_tickets": sorted(missing_broker_orders),
                 "missing_broker_deal_tickets": sorted(missing_broker_deals),
                 "broker_order_tickets_without_execution": sorted(
@@ -1478,6 +1584,11 @@ def analyse_role(
 
     for name, frame, timestamp_column in (
         ("telemetry.csv", telemetry.drop(columns=["snapshot_utc_parsed"]), "snapshot_utc"),
+        (
+            "completed_broker_events.csv",
+            completed_broker_events,
+            "event_time_utc",
+        ),
         ("decisions.csv", decisions, "event_time_utc"),
         ("order_events.csv", order_events, "completed_utc"),
         ("broker_deals.csv", deals, "time_utc"),
@@ -1516,12 +1627,20 @@ def build_observation_report(
         output_root / "consolidated_model_summary.csv", index=False
     )
     formal_gate = all(item.formal_audit_gate for item in summaries)
+    statuses = {item.operational_acceptance_status for item in summaries}
+    if "FAIL" in statuses:
+        operational_acceptance_status = "FAIL"
+    elif "LIMITED_RECOVERED" in statuses:
+        operational_acceptance_status = "LIMITED_RECOVERED"
+    else:
+        operational_acceptance_status = "PASS"
     report = {
         "schema_version": "1.0",
         "runtime_root": str(runtime_root),
         "output_root": str(output_root),
         "expected_poll_seconds": int(expected_poll_seconds),
         "formal_audit_gate": formal_gate,
+        "operational_acceptance_status": operational_acceptance_status,
         "models": summary_rows,
         "interpretation": {
             "operational_scope": "MT5 demo operational pilot",

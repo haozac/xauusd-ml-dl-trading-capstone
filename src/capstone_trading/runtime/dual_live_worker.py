@@ -70,6 +70,7 @@ from capstone_trading.runtime.dual_live_state import (
 from capstone_trading.runtime.live_audit import (
     BROKER_DEAL_FIELDS,
     BROKER_ORDER_FIELDS,
+    COMPLETED_BROKER_EVENT_FIELDS,
     DECISION_FIELDS,
     ORDER_EVENT_FIELDS,
     RUNTIME_EVENT_FIELDS,
@@ -79,8 +80,10 @@ from capstone_trading.runtime.live_audit import (
     broker_deal_row,
     broker_order_row,
     completed_bar_context,
+    completed_broker_event_audit_row,
     decision_audit_row,
     execution_audit_rows,
+    historical_backfill_identifier,
     runtime_event_audit_row,
     spread_points_from_tick,
     telemetry_audit_row,
@@ -114,6 +117,7 @@ class WorkerPaths:
     role_root: Path
     state: Path
     heartbeat: Path
+    completed_broker_events_csv: Path
     decisions_csv: Path
     telemetry_csv: Path
     order_events_csv: Path
@@ -237,6 +241,9 @@ def load_worker_settings(
         role_root=role_root,
         state=role_root / "state.json",
         heartbeat=role_root / "heartbeat.json",
+        completed_broker_events_csv=(
+            role_root / "completed_broker_events.csv"
+        ),
         decisions_csv=role_root / "decisions.csv",
         telemetry_csv=role_root / "telemetry.csv",
         order_events_csv=role_root / "order_events.csv",
@@ -394,6 +401,89 @@ def historical_unseen_event_rows(
     historical_index = pd.DatetimeIndex(pd.to_datetime(historical, utc=True))
     times = pd.to_datetime(completed_rows["time"], utc=True, errors="raise")
     return completed_rows.loc[times.isin(historical_index)].reset_index(drop=True)
+
+
+def unseen_completed_event_rows(
+    completed_rows: pd.DataFrame,
+    *,
+    previous_event_time_utc: str | None,
+) -> pd.DataFrame:
+    """Return actual completed broker bars newly observed by this worker.
+
+    A fresh runtime adopts only the latest completed event as its baseline.
+    After a cursor exists, every actual fetched event later than the cursor is
+    returned, including historical recovery rows and the latest current event.
+    """
+
+    if completed_rows.empty or "time" not in completed_rows.columns:
+        raise DualLiveWorkerError("Completed broker rows are empty or lack time")
+    work = completed_rows.copy()
+    work["time"] = pd.to_datetime(work["time"], utc=True, errors="raise")
+    work = (
+        work.drop_duplicates(subset=["time"], keep="last")
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
+    if previous_event_time_utc in (None, ""):
+        return work.tail(1).reset_index(drop=True)
+    previous = pd.Timestamp(previous_event_time_utc)
+    if previous.tzinfo is None:
+        previous = previous.tz_localize("UTC")
+    else:
+        previous = previous.tz_convert("UTC")
+    return work.loc[work["time"] > previous].reset_index(drop=True)
+
+
+def _normalised_utc_timestamp(value: Any) -> pd.Timestamp | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.tz_localize("UTC")
+    return parsed.tz_convert("UTC")
+
+
+def model_snapshot_coherence(
+    *,
+    latest_completed_event_time_utc: str,
+    signal: Any,
+) -> tuple[bool, dict[str, str | None]]:
+    """Require one coherent event across broker probe and inference fetch.
+
+    The broker event and both signal endpoint fields originate from separate
+    MT5 reads in the current runtime.  Strategy probabilities are usable only
+    when all three normalised timestamps identify the same completed M15 bar.
+    """
+
+    broker_event = _normalised_utc_timestamp(
+        latest_completed_event_time_utc
+    )
+    signal_event = _normalised_utc_timestamp(
+        getattr(signal, "event_time_utc", None)
+    )
+    signal_latest = _normalised_utc_timestamp(
+        getattr(signal, "latest_completed_bar_time_utc", None)
+    )
+    coherent = bool(
+        broker_event is not None
+        and signal_event is not None
+        and signal_latest is not None
+        and broker_event == signal_event == signal_latest
+    )
+    return coherent, {
+        "broker_event_time_utc": (
+            None if broker_event is None else broker_event.isoformat()
+        ),
+        "signal_event_time_utc": (
+            None if signal_event is None else signal_event.isoformat()
+        ),
+        "signal_latest_completed_bar_time_utc": (
+            None if signal_latest is None else signal_latest.isoformat()
+        ),
+    }
 
 
 def _rules_from_configs(config_a: Any, config_b_raw: Mapping[str, Any], role: str) -> tuple[StrategyRules, RiskRules, Any, Any]:
@@ -1131,6 +1221,52 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 completed_event_rows,
                 previous_event_time_utc=state.last_event_time_utc,
             )
+            unseen_event_rows = unseen_completed_event_rows(
+                completed_event_rows,
+                previous_event_time_utc=state.last_event_time_utc,
+            )
+            event_ledger_rows: list[dict[str, Any]] = []
+            for _, observed_row in unseen_event_rows.iterrows():
+                observed_time = pd.Timestamp(observed_row["time"])
+                is_latest = bool(
+                    observed_time == latest_completed_timestamp
+                )
+                if state.last_event_time_utc in (None, ""):
+                    observation_type = "FRESH_START_BASELINE"
+                elif is_latest:
+                    observation_type = "CURRENT_COMPLETED_EVENT"
+                else:
+                    observation_type = "HISTORICAL_RECOVERED_EVENT"
+                event_ledger_rows.append(
+                    completed_broker_event_audit_row(
+                        role=settings.role,
+                        event_time_utc=observed_time.isoformat(),
+                        observation_type=observation_type,
+                        run_id=run_id,
+                        iteration=iteration,
+                        worker_pid=os.getpid(),
+                        is_latest_current_event=is_latest,
+                        is_historical_recovered_event=(not is_latest),
+                        source_fetch_count=len(completed_event_rows),
+                    )
+                )
+            if event_ledger_rows:
+                append_unique_rows(
+                    settings.paths.completed_broker_events_csv,
+                    event_ledger_rows,
+                    fieldnames=COMPLETED_BROKER_EVENT_FIELDS,
+                    key_field="broker_event_key",
+                )
+            current_broker_bar_context = completed_bar_context(
+                completed_event_rows.loc[
+                    pd.to_datetime(
+                        completed_event_rows["time"],
+                        utc=True,
+                        errors="raise",
+                    )
+                    == latest_completed_timestamp
+                ].tail(1)
+            )
             inference_performed = bool(
                 cached_signal is None
                 or latest_completed_event_time
@@ -1184,6 +1320,23 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
 
             if signal is None:  # Defensive; inference above must populate it.
                 raise DualLiveWorkerError("No completed-M15 signal is available")
+
+            snapshot_coherent, snapshot_endpoint_details = (
+                model_snapshot_coherence(
+                    latest_completed_event_time_utc=(
+                        latest_completed_event_time
+                    ),
+                    signal=signal,
+                )
+            )
+            # A stale signal is an expected consequence of the frozen
+            # contiguous-window contract around a market gap.  The dangerous
+            # race is a signal claiming to be current while its endpoint differs
+            # from the independently probed broker event.
+            model_snapshot_mismatch = bool(
+                not bool(signal.stale_event_warning)
+                and not snapshot_coherent
+            )
 
             # Broker and account risk are inspected on every poll, including
             # between M15 closes.  This lets kill switches and drawdown stops
@@ -1252,6 +1405,20 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     event_time_utc=latest_completed_event_time,
                     details={"status": reconciliation.status},
                 )
+            if model_snapshot_mismatch:
+                _write_runtime_event(
+                    settings,
+                    run_id=run_id,
+                    iteration=iteration,
+                    event_type="MODEL_SNAPSHOT_MISMATCH",
+                    event_reason=(
+                        "broker_and_model_completed_event_endpoints_differ"
+                    ),
+                    severity="ERROR",
+                    state=state,
+                    event_time_utc=latest_completed_event_time,
+                    details=snapshot_endpoint_details,
+                )
             fresh_start_adopt_only = state.last_event_time_utc is None
             if not historical_backfill_rows.empty:
                 appended_backfills = 0
@@ -1283,6 +1450,11 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                         },
                         broker_before=broker_inspection,
                         broker_after=broker_inspection,
+                    )
+                    backfill_row["decision_id"] = (
+                        historical_backfill_identifier(
+                            settings.role, backfill_event_time
+                        )
                     )
                     appended = append_unique_rows(
                         settings.paths.decisions_csv,
@@ -1391,10 +1563,17 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 # unavailable.
                 probability_up=(
                     None
-                    if bool(signal.stale_event_warning)
+                    if (
+                        bool(signal.stale_event_warning)
+                        or model_snapshot_mismatch
+                    )
                     else float(signal.probability_up)
                 ),
-                stale_event_warning=bool(signal.stale_event_warning),
+                stale_event_warning=bool(
+                    signal.stale_event_warning
+                    or model_snapshot_mismatch
+                ),
+                model_snapshot_mismatch=model_snapshot_mismatch,
                 reconciliation_blocked=reconciliation.blocked,
                 reconciliation_reason=reconciliation.reason,
                 session_gap_lockout_active=session_lockout_active,
@@ -1517,7 +1696,7 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                         decision=decision,
                         state_before=state_before_decision,
                         state_after=state,
-                        bar_context=cached_bar_context,
+                        bar_context=current_broker_bar_context,
                         signal_context=cached_signal_context,
                         snapshot_context=cached_snapshot_context,
                         broker_before=broker_before,

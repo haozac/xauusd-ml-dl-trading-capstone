@@ -137,6 +137,13 @@ BROKER_ORDER_FIELDS: tuple[str, ...] = (
     "price_stoplimit", "sl", "tp", "comment", "external_id", "raw_json",
 )
 
+COMPLETED_BROKER_EVENT_FIELDS: tuple[str, ...] = (
+    "schema_version", "broker_event_key", "role", "event_time_utc",
+    "first_observed_utc", "observation_type", "run_id", "iteration",
+    "worker_pid", "is_latest_current_event",
+    "is_historical_recovered_event", "source_fetch_count",
+)
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -368,6 +375,63 @@ def decision_identifier(
     return f"{role}:{run_id or 'NO_RUN'}:{iteration if iteration is not None else 'NA'}:{event}"
 
 
+def _stable_event_token(event_time_utc: str | None) -> str:
+    value = str(event_time_utc or "NO_EVENT").strip()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value.replace(":", "").replace("+", "_")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat().replace(":", "").replace("+", "_")
+
+
+def completed_broker_event_identifier(role: str, event_time_utc: str) -> str:
+    """Return a stable role/event key independent of process generations."""
+
+    return f"BROKER_EVENT:{role}:{_stable_event_token(event_time_utc)}"
+
+
+def historical_backfill_identifier(role: str, event_time_utc: str) -> str:
+    """Return a restart-idempotent decision key for a recovered old bar."""
+
+    return f"HISTORICAL_BACKFILL:{role}:{_stable_event_token(event_time_utc)}"
+
+
+def completed_broker_event_audit_row(
+    *,
+    role: str,
+    event_time_utc: str,
+    observation_type: str,
+    run_id: str,
+    iteration: int,
+    worker_pid: int,
+    is_latest_current_event: bool,
+    is_historical_recovered_event: bool,
+    source_fetch_count: int,
+) -> dict[str, Any]:
+    """Create an independent append-only broker-event inventory row."""
+
+    return {
+        "schema_version": "1.0",
+        "broker_event_key": completed_broker_event_identifier(
+            role, event_time_utc
+        ),
+        "role": role,
+        "event_time_utc": event_time_utc,
+        "first_observed_utc": utc_now_iso(),
+        "observation_type": observation_type,
+        "run_id": run_id,
+        "iteration": int(iteration),
+        "worker_pid": int(worker_pid),
+        "is_latest_current_event": bool(is_latest_current_event),
+        "is_historical_recovered_event": bool(
+            is_historical_recovered_event
+        ),
+        "source_fetch_count": int(source_fetch_count),
+    }
+
+
 def spread_points_from_tick(
     tick: Mapping[str, Any],
     symbol_info: Mapping[str, Any],
@@ -594,6 +658,7 @@ def decision_audit_row(
             if decision.stale_event_warning
             or decision.action.startswith("MODEL_UNAVAILABLE")
             or decision.action.startswith("CONTROL_MODEL_UNAVAILABLE")
+            or decision.action.startswith("CONTROL_MODEL_SNAPSHOT_MISMATCH")
             else None
         )
     )

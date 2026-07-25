@@ -724,3 +724,53 @@ def test_risk_flatten_execution_is_classified_as_control(
 
     assert row["trigger_type"] == expected_trigger
     assert row["decision_id"].startswith(f"{expected_trigger}:")
+
+
+def test_stable_broker_and_backfill_identifiers_are_restart_independent() -> None:
+    from capstone_trading.runtime.live_audit import (
+        completed_broker_event_identifier,
+        historical_backfill_identifier,
+    )
+
+    event = "2026-07-24T10:15:00+00:00"
+    assert completed_broker_event_identifier("model_a", event).startswith(
+        "BROKER_EVENT:model_a:"
+    )
+    assert historical_backfill_identifier("model_a", event).startswith(
+        "HISTORICAL_BACKFILL:model_a:"
+    )
+    assert historical_backfill_identifier("model_a", event) == (
+        historical_backfill_identifier("model_a", "2026-07-24T10:15:00Z")
+    )
+
+
+def test_historical_backfill_stable_key_prevents_restart_duplicate(
+    tmp_path: Path,
+) -> None:
+    from capstone_trading.runtime.live_audit import (
+        historical_backfill_identifier,
+    )
+
+    path = tmp_path / "decisions.csv"
+    fields = ("decision_id", "run_id", "iteration", "event_time_utc")
+    event = "2026-07-24T10:15:00+00:00"
+    stable_id = historical_backfill_identifier("model_a", event)
+    first = {
+        "decision_id": stable_id,
+        "run_id": "run-before-crash",
+        "iteration": 10,
+        "event_time_utc": event,
+    }
+    replayed = {
+        "decision_id": stable_id,
+        "run_id": "run-after-restart",
+        "iteration": 1,
+        "event_time_utc": event,
+    }
+
+    assert append_unique_rows(
+        path, [first], fieldnames=fields, key_field="decision_id"
+    ) == 1
+    assert append_unique_rows(
+        path, [replayed], fieldnames=fields, key_field="decision_id"
+    ) == 0
