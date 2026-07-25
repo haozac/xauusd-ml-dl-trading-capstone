@@ -59,7 +59,7 @@ def main() -> int:
             report.get("orders_enabled"),
             settings.paths.final_report,
         )
-        return 0 if report.get("status") == "PASS" else 2
+        return 0 if report.get("formal_gate") is True else 2
     except Exception:
         LOGGER.exception("Dual strategy supervisor failed")
         return 2

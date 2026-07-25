@@ -531,3 +531,51 @@ def test_collect_broker_history_keeps_linked_blank_symbol_fee_deal() -> None:
     )
 
     assert {int(row["ticket"]) for row in audit.deals} == {5101, 9999}
+
+
+def test_history_filter_applies_server_offset_before_session_boundary() -> None:
+    fake = FakeMt5(login=1234309)
+    # Raw MT5 epoch encodes 02:00 broker-server time.  With the frozen +3 hour
+    # server offset this is 23:00 UTC on the preceding day and must be excluded
+    # from a pilot whose UTC observation starts at midnight.
+    raw_server_time = int(
+        datetime(2026, 7, 24, 2, 0, tzinfo=timezone.utc).timestamp()
+    )
+    fake.history_orders.append(
+        {
+            "ticket": 777,
+            "position_id": 777,
+            "time_setup": raw_server_time,
+            "time_done": raw_server_time,
+            "time_setup_msc": raw_server_time * 1000,
+            "time_done_msc": raw_server_time * 1000,
+            "symbol": "XAUUSD",
+            "magic": 26070101,
+            "comment": "CP_DUAL_A_OLD",
+        }
+    )
+    fake.history_deals.append(
+        {
+            "ticket": 778,
+            "order": 777,
+            "position_id": 777,
+            "time": raw_server_time,
+            "time_msc": raw_server_time * 1000,
+            "symbol": "XAUUSD",
+            "magic": 26070101,
+            "comment": "CP_DUAL_A_OLD",
+        }
+    )
+
+    audit = collect_broker_history(
+        mt5_module=fake,
+        terminal_path="model_a.exe",
+        controls=controls(),
+        role="model_a",
+        expected_login_suffix="4309",
+        started_utc=datetime(2026, 7, 24, 0, 0, tzinfo=timezone.utc),
+        server_time_offset_hours=3,
+    )
+
+    assert audit.orders == ()
+    assert audit.deals == ()

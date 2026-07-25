@@ -599,3 +599,96 @@ def test_worker_transition_uses_latest_completed_event_clock() -> None:
     )
     assert isinstance(event_keyword.value, ast.Name)
     assert event_keyword.value.id == "latest_completed_event_time"
+
+
+def test_fresh_runtime_first_event_is_adopt_only_when_flat() -> None:
+    state = initial_state("model_a", execution_mode="live")
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="fresh",
+        iteration=1,
+        event_time_utc="2026-07-26T20:45:00+00:00",
+        probability_up=0.80,
+        stale_event_warning=False,
+        reconciliation_blocked=False,
+        fresh_start_adopt_only=True,
+    )
+    assert decision.action == "CONTROL_FRESH_START_BLOCK"
+    assert decision.target_position == 0
+    assert decision.probability_up is None
+    after = apply_transition(
+        state,
+        decision,
+        confirmed_position=0,
+        broker_ticket=None,
+    )
+    assert after.last_event_time_utc == "2026-07-26T20:45:00+00:00"
+
+
+def test_fresh_runtime_first_event_flattens_adopted_exposure() -> None:
+    state = replace(
+        initial_state("model_a", execution_mode="live"),
+        virtual_position=-1,
+        broker_position=-1,
+    )
+    decision = decide_strategy_transition(
+        state,
+        rules=model_a_rules(),
+        run_id="fresh",
+        iteration=1,
+        event_time_utc="2026-07-26T20:45:00+00:00",
+        probability_up=0.20,
+        stale_event_warning=False,
+        reconciliation_blocked=False,
+        fresh_start_adopt_only=True,
+    )
+    assert decision.action == "CONTROL_FRESH_START_FLATTEN"
+    assert decision.target_position == 0
+
+
+def test_atomic_json_replace_retries_transient_permission_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import capstone_trading.runtime.dual_live_state as state_module
+
+    target = tmp_path / "heartbeat.json"
+    real_replace = state_module.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(source, destination):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError("transient Windows reader lock")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(state_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(state_module, "ATOMIC_REPLACE_RETRY_SECONDS", 0.0)
+    state_module.write_json_atomic(target, {"status": "RUNNING"})
+
+    assert calls["count"] == 2
+    assert '"status": "RUNNING"' in target.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.tmp"))
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_historical_unseen_event_times_excludes_latest_current_event() -> None:
+    from capstone_trading.runtime.dual_live_state import (
+        historical_unseen_event_times,
+    )
+
+    result = historical_unseen_event_times(
+        [
+            "2026-07-24T10:00:00+00:00",
+            "2026-07-24T10:15:00+00:00",
+            "2026-07-24T10:30:00+00:00",
+            "2026-07-24T10:45:00+00:00",
+        ],
+        previous_event_time_utc="2026-07-24T10:00:00+00:00",
+    )
+
+    assert result == (
+        "2026-07-24T10:15:00+00:00",
+        "2026-07-24T10:30:00+00:00",
+    )

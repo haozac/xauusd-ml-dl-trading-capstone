@@ -812,6 +812,7 @@ def _history_row_time_utc(
     row: Mapping[str, Any],
     *,
     kind: str,
+    server_time_offset_hours: int = 0,
 ) -> datetime | None:
     if kind == "deal":
         milliseconds = row.get("time_msc")
@@ -826,9 +827,11 @@ def _history_row_time_utc(
             return datetime.fromtimestamp(
                 float(milliseconds) / 1000.0,
                 tz=timezone.utc,
-            )
+            ) - timedelta(hours=int(server_time_offset_hours))
         if seconds not in (None, "", 0, "0"):
-            return datetime.fromtimestamp(float(seconds), tz=timezone.utc)
+            return datetime.fromtimestamp(
+                float(seconds), tz=timezone.utc
+            ) - timedelta(hours=int(server_time_offset_hours))
     except (TypeError, ValueError, OSError, OverflowError):
         return None
     return None
@@ -843,6 +846,7 @@ def _history_rows_for_role(
     observation_started_utc: datetime,
     known_order_tickets: set[int] | None = None,
     known_position_ids: set[int] | None = None,
+    server_time_offset_hours: int = 0,
 ) -> tuple[Mapping[str, Any], ...]:
     """Filter broker history to this role and observation session.
 
@@ -864,7 +868,11 @@ def _history_rows_for_role(
         symbol = str(row.get("symbol", "") or "").upper()
         magic = _int_or_none(row.get("magic"))
         comment = str(row.get("comment", "") or "")
-        row_time = _history_row_time_utc(row, kind=kind)
+        row_time = _history_row_time_utc(
+            row,
+            kind=kind,
+            server_time_offset_hours=server_time_offset_hours,
+        )
         order_ticket = _int_or_none(row.get("order")) or _int_or_none(
             row.get("ticket") if kind == "order" else None
         )
@@ -911,6 +919,7 @@ def collect_broker_history(
     role: str,
     expected_login_suffix: str,
     started_utc: datetime,
+    server_time_offset_hours: int = 0,
 ) -> BrokerHistoryAudit:
     """Read all role-owned broker deals and orders for the current run window."""
 
@@ -953,6 +962,7 @@ def collect_broker_history(
             role=role,
             kind="order",
             observation_started_utc=observation_started,
+            server_time_offset_hours=server_time_offset_hours,
         )
         known_order_tickets = {
             ticket
@@ -974,6 +984,7 @@ def collect_broker_history(
             observation_started_utc=observation_started,
             known_order_tickets=known_order_tickets,
             known_position_ids=known_position_ids,
+            server_time_offset_hours=server_time_offset_hours,
         )
         return BrokerHistoryAudit(
             role=role,

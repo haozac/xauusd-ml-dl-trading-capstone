@@ -37,9 +37,13 @@ class RoleObservationSummary:
     model_availability_status: str
     model_prediction_endpoint_mismatch_count: int
     contiguity_warmup_event_count: int
+    historical_backfill_event_count: int
+    historical_backfill_exposure_observed_count: int
+    historical_backfill_order_count: int
     model_unavailable_exposure_after_disposition_count: int
     maximum_gap_control_processing_delay_seconds: float | None
     maximum_completed_to_decision_lag_minutes: float | None
+    maximum_broker_event_to_model_prediction_lag_minutes: float | None
     stale_completed_event_count: int
     gap_decision_count: int
     order_event_rows: int
@@ -613,15 +617,43 @@ def analyse_role(
         errors="coerce",
         format="mixed",
     ).dropna()
-    unique_completed_events = pd.DatetimeIndex(
-        completed_event_times.drop_duplicates().sort_values()
-    )
     decision_event_times = pd.to_datetime(
         decisions.get("event_time_utc", pd.Series(dtype="object")),
         utc=True,
         errors="coerce",
         format="mixed",
     ).dropna()
+    disposition_for_inventory = decisions.get(
+        "broker_event_disposition",
+        decisions.get(
+            "action", pd.Series("", index=decisions.index, dtype="object")
+        ),
+    ).fillna("").astype(str)
+    backfill_event_times = pd.to_datetime(
+        decisions.loc[
+            disposition_for_inventory.eq(
+                "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+            ),
+            "event_time_utc",
+        ]
+        if "event_time_utc" in decisions.columns
+        else pd.Series(dtype="object"),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    ).dropna()
+    unique_completed_events = pd.DatetimeIndex(
+        pd.concat(
+            [
+                pd.Series(completed_event_times),
+                pd.Series(backfill_event_times),
+            ],
+            ignore_index=True,
+        )
+        .dropna()
+        .drop_duplicates()
+        .sort_values()
+    )
     unique_decision_events = pd.DatetimeIndex(
         decision_event_times.drop_duplicates().sort_values()
     )
@@ -718,14 +750,25 @@ def analyse_role(
         "MODEL_UNAVAILABLE_CONTIGUITY_WARMUP"
     )
     contiguity_warmup_event_count = int(contiguity_warmup_mask.sum())
+    historical_backfill_mask = action_series.eq(
+        "MODEL_UNAVAILABLE_HISTORICAL_BACKFILL"
+    )
+    historical_backfill_event_count = int(historical_backfill_mask.sum())
     unavailable_mask = ~prediction_available
     target_positions = _numeric(decisions, "target_position").fillna(0.0)
     broker_after_positions = _numeric(
         decisions, "broker_position_after_inspection"
     ).fillna(target_positions)
+    historical_backfill_exposure_observed_count = int(
+        (
+            historical_backfill_mask
+            & ((target_positions != 0.0) | (broker_after_positions != 0.0))
+        ).sum()
+    )
     model_unavailable_exposure_after_disposition_count = int(
         (
             unavailable_mask
+            & ~historical_backfill_mask
             & ((target_positions != 0.0) | (broker_after_positions != 0.0))
         ).sum()
     )
@@ -791,6 +834,41 @@ def analyse_role(
         None
         if completed_to_decision_lag.empty
         else float(completed_to_decision_lag.max())
+    )
+    broker_event_times_for_prediction_lag = pd.to_datetime(
+        decisions.get("event_time_utc", pd.Series(dtype="object")),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    model_endpoint_times_for_lag = pd.to_datetime(
+        decisions.get(
+            "model_prediction_event_time_utc", pd.Series(dtype="object")
+        ),
+        utc=True,
+        errors="coerce",
+        format="mixed",
+    )
+    # Current-event audit fields deliberately blank the stale model endpoint
+    # while the frozen 48-bar sequence is unavailable.  Forward-fill only for
+    # this availability metric so it reports how long the broker event clock
+    # has advanced since the most recent actual model prediction.
+    latest_available_model_endpoint = model_endpoint_times_for_lag.ffill()
+    broker_event_to_model_prediction_lag = (
+        broker_event_times_for_prediction_lag
+        - latest_available_model_endpoint
+    ).dt.total_seconds().div(60.0)
+    broker_event_to_model_prediction_lag = (
+        broker_event_to_model_prediction_lag[
+            broker_event_to_model_prediction_lag.notna()
+            & (broker_event_to_model_prediction_lag >= 0.0)
+            & ~historical_backfill_mask
+        ]
+    )
+    maximum_broker_event_to_model_prediction_lag = (
+        None
+        if broker_event_to_model_prediction_lag.empty
+        else float(broker_event_to_model_prediction_lag.max())
     )
     timestamps = telemetry["snapshot_utc_parsed"].dropna()
     first_snapshot = None if timestamps.empty else timestamps.min().isoformat()
@@ -877,6 +955,16 @@ def analyse_role(
         ).sum()
     )
     unknown_execution_trigger_count = int(unknown_trigger_mask.sum())
+    historical_backfill_decision_ids = set(
+        decisions.loc[historical_backfill_mask, "decision_id"]
+        .dropna()
+        .astype(str)
+        if "decision_id" in decisions.columns
+        else []
+    )
+    historical_backfill_order_count = int(
+        order_decision_ids.isin(historical_backfill_decision_ids).sum()
+    )
     order_event_order_tickets = _ticket_set(successful_orders, "order_ticket")
     order_event_deal_tickets = _ticket_set(successful_orders, "deal_ticket")
     broker_order_tickets = _ticket_set(orders, "ticket")
@@ -1087,6 +1175,10 @@ def analyse_role(
             model_unavailable_exposure_after_disposition_count,
         ),
         (
+            "historical_backfill_orders",
+            historical_backfill_order_count,
+        ),
+        (
             "strategy_executions_missing_decision_link",
             strategy_execution_missing_decision_link_count,
         ),
@@ -1170,6 +1262,13 @@ def analyse_role(
     worker_error_count = int((event_types == "WORKER_ERROR").sum())
     if worker_error_count:
         audit_failures.append(f"worker_error_count={worker_error_count}")
+    inferred_restart_count = max(
+        0, int(max(run_ids.nunique(), worker_pids.nunique())) - 1
+    )
+    if inferred_restart_count:
+        audit_failures.append(
+            f"inferred_worker_restart_count={inferred_restart_count}"
+        )
     if final_status != "PASS" or final_formal_gate is not True:
         audit_failures.append(
             f"final_worker_gate=status:{final_status},formal_gate:{final_formal_gate}"
@@ -1195,6 +1294,11 @@ def analyse_role(
             prediction_endpoint_mismatch_count
         ),
         contiguity_warmup_event_count=contiguity_warmup_event_count,
+        historical_backfill_event_count=historical_backfill_event_count,
+        historical_backfill_exposure_observed_count=(
+            historical_backfill_exposure_observed_count
+        ),
+        historical_backfill_order_count=historical_backfill_order_count,
         model_unavailable_exposure_after_disposition_count=(
             model_unavailable_exposure_after_disposition_count
         ),
@@ -1203,6 +1307,9 @@ def analyse_role(
         ),
         maximum_completed_to_decision_lag_minutes=(
             maximum_completed_to_decision_lag
+        ),
+        maximum_broker_event_to_model_prediction_lag_minutes=(
+            maximum_broker_event_to_model_prediction_lag
         ),
         stale_completed_event_count=stale_completed_event_count,
         gap_decision_count=gap_decision_count,
@@ -1237,9 +1344,7 @@ def analyse_role(
         ),
         worker_run_count=int(run_ids.nunique()),
         worker_pid_count=int(worker_pids.nunique()),
-        inferred_worker_restart_count=max(
-            0, int(max(run_ids.nunique(), worker_pids.nunique())) - 1
-        ),
+        inferred_worker_restart_count=inferred_restart_count,
         initial_broker_position=initial_broker_position,
         initial_pending_order_count=initial_pending_orders,
         starting_balance=starting_balance,

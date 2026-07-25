@@ -284,3 +284,18 @@ def test_windows_termination_uses_taskkill_process_tree(
     assert calls == [["taskkill", "/PID", "999", "/T", "/F"]]
     assert process.terminate_called is False
     assert current.log_handle.closed is True
+
+
+def test_formal_acceptance_gate_rejects_recovered_restart() -> None:
+    from capstone_trading.runtime.dual_strategy_supervisor import (
+        formal_acceptance_gate,
+    )
+
+    assert formal_acceptance_gate(
+        operational_status="PASS",
+        restart_events=[],
+    ) is True
+    assert formal_acceptance_gate(
+        operational_status="PASS",
+        restart_events=[{"role": "model_b", "reason": "worker_exited_2"}],
+    ) is False

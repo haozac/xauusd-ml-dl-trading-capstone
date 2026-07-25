@@ -55,6 +55,8 @@ from capstone_trading.runtime.dual_live_state import (
     decide_strategy_transition,
     decision_to_mapping,
     heartbeat_payload,
+    historical_backfill_decision,
+    historical_unseen_event_times,
     load_state,
     reconcile_state,
     session_gap_lockout_status,
@@ -307,16 +309,17 @@ def load_worker_settings(
     )
 
 
-def probe_latest_completed_event_time(
+def probe_completed_event_rows(
     *,
     mt5_module: Any,
     runtime_config: Any,
-) -> str:
-    """Read only the latest completed M15 timestamp without model inference.
+    count: int = 1024,
+) -> pd.DataFrame:
+    """Read recent actual completed M15 bars in canonical UTC order.
 
-    MT5 bar epochs on this Dukascopy setup encode broker server time.  The same
-    frozen +3-hour conversion used by the shadow pipeline is applied before the
-    timestamp is compared with persistent strategy state.
+    The wider probe lets a restarted worker enumerate every unseen real broker
+    bar instead of only observing the latest endpoint.  No synthetic bars are
+    created.
     """
 
     proxy = SafeMt5Proxy(mt5_module)
@@ -330,24 +333,67 @@ def probe_latest_completed_event_time(
             proxy,
             symbol=symbol,
             timeframe_value=timeframe,
-            count=1,
-        )
-        raw = pd.Timestamp(rates["time"].iloc[-1])
-        if raw.tzinfo is None:
-            raw = raw.tz_localize("UTC")
-        else:
-            raw = raw.tz_convert("UTC")
-        canonical = raw - pd.Timedelta(
+            count=max(2, int(count)),
+        ).copy()
+        canonical = pd.to_datetime(
+            rates["time"], utc=True, errors="raise"
+        ) - pd.Timedelta(
             hours=int(runtime_config.mt5_server_time_offset_hours)
         )
-        return canonical.isoformat()
+        rates["time"] = canonical
+        rates = (
+            rates.drop_duplicates(subset=["time"], keep="last")
+            .sort_values("time")
+            .reset_index(drop=True)
+        )
+        return rates
     finally:
         if initialized:
             proxy.shutdown()
         if proxy.forbidden_attempts:
             raise DualLiveWorkerError(
-                f"Latest-bar probe attempted forbidden APIs: {proxy.forbidden_attempts}"
+                f"Completed-bar probe attempted forbidden APIs: "
+                f"{proxy.forbidden_attempts}"
             )
+
+
+def probe_latest_completed_event_time(
+    *,
+    mt5_module: Any,
+    runtime_config: Any,
+) -> str:
+    rates = probe_completed_event_rows(
+        mt5_module=mt5_module,
+        runtime_config=runtime_config,
+        count=2,
+    )
+    return pd.Timestamp(rates["time"].iloc[-1]).isoformat()
+
+
+def historical_unseen_event_rows(
+    completed_rows: pd.DataFrame,
+    *,
+    previous_event_time_utc: str | None,
+) -> pd.DataFrame:
+    event_times = tuple(
+        pd.to_datetime(
+            completed_rows.get("time", pd.Series(dtype="object")),
+            utc=True,
+            errors="raise",
+        ).astype(str)
+    )
+    try:
+        historical = historical_unseen_event_times(
+            event_times,
+            previous_event_time_utc=previous_event_time_utc,
+        )
+    except Exception as exc:
+        raise DualLiveWorkerError(str(exc)) from exc
+    if not historical:
+        return completed_rows.iloc[0:0].copy()
+    historical_index = pd.DatetimeIndex(pd.to_datetime(historical, utc=True))
+    times = pd.to_datetime(completed_rows["time"], utc=True, errors="raise")
+    return completed_rows.loc[times.isin(historical_index)].reset_index(drop=True)
 
 
 def _rules_from_configs(config_a: Any, config_b_raw: Mapping[str, Any], role: str) -> tuple[StrategyRules, RiskRules, Any, Any]:
@@ -533,6 +579,7 @@ def _refresh_broker_history(
             role=settings.role,
             expected_login_suffix=settings.expected_login_suffix,
             started_utc=observation_started_at,
+            server_time_offset_hours=server_time_offset_hours,
         )
         deal_rows = [
             broker_deal_row(
@@ -658,6 +705,71 @@ def _heartbeat(
     )
 
 
+def _persisted_decision_summary(
+    settings: WorkerSettings,
+    in_memory_decisions: list[StrategyDecision],
+) -> dict[str, Any]:
+    path = settings.paths.decisions_csv
+    if not path.exists() or path.stat().st_size == 0:
+        return summarise_decisions(in_memory_decisions)
+    frame = pd.read_csv(path)
+    action = frame.get(
+        "action", pd.Series("", index=frame.index, dtype="object")
+    ).fillna("").astype(str)
+    event = frame.get(
+        "event_time_utc", pd.Series("", index=frame.index, dtype="object")
+    ).fillna("").astype(str)
+
+    def true_count(column: str) -> int:
+        if column not in frame.columns:
+            return 0
+        return int(
+            frame[column]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin({"true", "1", "yes"})
+            .sum()
+        )
+
+    duplicate = (
+        frame.get(
+            "duplicate_event",
+            pd.Series(False, index=frame.index),
+        )
+        .fillna(False)
+        .astype(str)
+        .str.lower()
+        .isin({"true", "1", "yes"})
+    )
+    gap = (
+        frame.get(
+            "gap_from_previous_event",
+            pd.Series(False, index=frame.index),
+        )
+        .fillna(False)
+        .astype(str)
+        .str.lower()
+        .isin({"true", "1", "yes"})
+    )
+    return {
+        "decision_count": int(len(frame)),
+        "unique_completed_m15_events": int(
+            event[event.str.len() > 0].nunique()
+        ),
+        "action_counts": {
+            str(key): int(value)
+            for key, value in action.value_counts().items()
+        },
+        "order_check_called_count": true_count("order_check_called"),
+        "order_send_called_count": true_count("order_send_called"),
+        "order_send_passed_count": true_count("order_send_passed"),
+        "duplicate_event_count": int(duplicate.sum()),
+        "gap_event_count": int(gap.sum()),
+    }
+
+
 def _report(
     *,
     settings: WorkerSettings,
@@ -681,7 +793,7 @@ def _report(
         "terminal_path": settings.terminal_path,
         "expected_login_suffix_masked": f"****{settings.expected_login_suffix}",
         "state": asdict(state),
-        "summary": summarise_decisions(decisions),
+        "summary": _persisted_decision_summary(settings, decisions),
         "error": error,
         "safety": {
             "completed_m15_only": True,
@@ -696,6 +808,9 @@ def _report(
             "performance_metrics_calculated_offline": True,
             "market_event_clock_drives_transition_safety": True,
             "canonical_broker_audit_timestamps": True,
+            "fresh_runtime_first_event_adopt_only": True,
+            "historical_completed_event_backfill_no_execution": True,
+            "atomic_persistence_windows_retry": True,
             "session_gap_lockout_enabled": (
                 settings.session_gap_lockout_enabled
             ),
@@ -976,9 +1091,45 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
             # CNN-LSTM only when a new completed M15 event is available.  A first
             # inference is deliberately performed after every worker start so the
             # process owns a fresh in-memory signal before restart reconciliation.
-            latest_completed_event_time = probe_latest_completed_event_time(
+            completed_event_rows = probe_completed_event_rows(
                 mt5_module=mt5_module,
                 runtime_config=runtime_config,
+                count=2,
+            )
+            latest_completed_timestamp = pd.Timestamp(
+                completed_event_rows["time"].iloc[-1]
+            )
+            latest_completed_event_time = (
+                latest_completed_timestamp.isoformat()
+            )
+            previous_completed_timestamp = (
+                None
+                if state.last_event_time_utc in (None, "")
+                else pd.Timestamp(state.last_event_time_utc)
+            )
+            if previous_completed_timestamp is not None:
+                if previous_completed_timestamp.tzinfo is None:
+                    previous_completed_timestamp = (
+                        previous_completed_timestamp.tz_localize("UTC")
+                    )
+                else:
+                    previous_completed_timestamp = (
+                        previous_completed_timestamp.tz_convert("UTC")
+                    )
+            if (
+                previous_completed_timestamp is not None
+                and latest_completed_timestamp
+                - previous_completed_timestamp
+                > pd.Timedelta(minutes=15)
+            ):
+                completed_event_rows = probe_completed_event_rows(
+                    mt5_module=mt5_module,
+                    runtime_config=runtime_config,
+                    count=1024,
+                )
+            historical_backfill_rows = historical_unseen_event_rows(
+                completed_event_rows,
+                previous_event_time_utc=state.last_event_time_utc,
             )
             inference_performed = bool(
                 cached_signal is None
@@ -1101,6 +1252,75 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                     event_time_utc=latest_completed_event_time,
                     details={"status": reconciliation.status},
                 )
+            fresh_start_adopt_only = state.last_event_time_utc is None
+            if not historical_backfill_rows.empty:
+                appended_backfills = 0
+                backfill_event_times: list[str] = []
+                for backfill_index, (_, completed_row) in enumerate(
+                    historical_backfill_rows.iterrows(), start=1
+                ):
+                    backfill_event_time = pd.Timestamp(
+                        completed_row["time"]
+                    ).isoformat()
+                    backfill_decision = historical_backfill_decision(
+                        state,
+                        rules=strategy_rules,
+                        run_id=run_id,
+                        iteration=(iteration * 10_000 + backfill_index),
+                        event_time_utc=backfill_event_time,
+                    )
+                    backfill_row = decision_audit_row(
+                        decision=backfill_decision,
+                        state_before=state,
+                        state_after=state,
+                        bar_context=completed_bar_context(
+                            pd.DataFrame([completed_row])
+                        ),
+                        signal_context={},
+                        snapshot_context={
+                            "strategy_rules": asdict(strategy_rules),
+                            "risk_rules": asdict(risk_rules),
+                        },
+                        broker_before=broker_inspection,
+                        broker_after=broker_inspection,
+                    )
+                    appended = append_unique_rows(
+                        settings.paths.decisions_csv,
+                        [backfill_row],
+                        fieldnames=DECISION_FIELDS,
+                        key_field="decision_id",
+                    )
+                    if appended:
+                        appended_backfills += 1
+                        backfill_event_times.append(backfill_event_time)
+                        decisions.append(backfill_decision)
+                if appended_backfills:
+                    state = replace(
+                        state,
+                        records_written=(
+                            state.records_written + appended_backfills
+                        ),
+                        updated_utc=utc_now_iso(),
+                    )
+                    write_state(settings.paths.state, state)
+                    _write_runtime_event(
+                        settings,
+                        run_id=run_id,
+                        iteration=iteration,
+                        event_type="BROKER_EVENTS_BACKFILLED",
+                        event_reason=(
+                            "actual_completed_events_discovered_after_outage"
+                        ),
+                        severity="WARNING",
+                        state=state,
+                        event_time_utc=latest_completed_event_time,
+                        details={
+                            "backfill_count": appended_backfills,
+                            "event_times_utc": backfill_event_times,
+                            "orders_permitted": False,
+                        },
+                    )
+
             state_before_decision = replace(state)
             broker_before = broker_inspection
             execution = None
@@ -1179,6 +1399,7 @@ def run_worker(settings: WorkerSettings) -> dict[str, Any]:
                 reconciliation_reason=reconciliation.reason,
                 session_gap_lockout_active=session_lockout_active,
                 session_gap_lockout_reason=session_lockout_reason,
+                fresh_start_adopt_only=fresh_start_adopt_only,
             )
             if decision.duplicate_event:
                 # Duplicate M15 events do not advance hold/cooldown counters and

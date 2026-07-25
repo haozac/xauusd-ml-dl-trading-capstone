@@ -24,6 +24,9 @@ from typing import Any, Iterable, Mapping
 import csv
 import json
 import math
+import os
+import time
+import uuid
 
 from capstone_trading.policy.position_transition import (
     policy_event_units as shared_policy_event_units,
@@ -371,14 +374,53 @@ def load_state(path: Path, *, role: str, execution_mode: str, worker_pid: int | 
     return state
 
 
+ATOMIC_REPLACE_TIMEOUT_SECONDS = 5.0
+ATOMIC_REPLACE_RETRY_SECONDS = 0.05
+_ATOMIC_RETRY_WINERRORS = frozenset({5, 32})
+
+
+def _unique_atomic_temporary(path: Path) -> Path:
+    return path.with_name(
+        f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
+
+
+def _replace_atomic_with_retry(temporary: Path, path: Path) -> None:
+    """Replace ``path`` while tolerating short Windows file-reader locks.
+
+    Antivirus, indexing, backup, and monitoring processes can briefly hold a
+    JSON/CSV target open on Windows.  A deterministic ``<name>.tmp`` also lets
+    concurrent writers collide.  A unique same-directory temporary plus a
+    bounded retry preserves atomic replacement without turning a transient
+    WinError 5/32 into a worker crash.
+    """
+
+    deadline = time.monotonic() + ATOMIC_REPLACE_TIMEOUT_SECONDS
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except OSError as exc:
+            retryable = isinstance(exc, PermissionError) or getattr(
+                exc, "winerror", None
+            ) in _ATOMIC_RETRY_WINERRORS
+            if not retryable or time.monotonic() >= deadline:
+                raise
+            time.sleep(ATOMIC_REPLACE_RETRY_SECONDS)
+
+
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, default=str),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    temporary = _unique_atomic_temporary(path)
+    try:
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True, default=str)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_atomic_with_retry(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_state(path: Path, state: DualLiveState) -> None:
@@ -404,13 +446,20 @@ def append_csv_atomic_row(path: Path, row: Mapping[str, Any]) -> None:
     for key in row:
         if key not in fieldnames:
             fieldnames.append(key)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(existing_rows)
-        writer.writerow(dict(row))
-    temporary.replace(path)
+    temporary = _unique_atomic_temporary(path)
+    try:
+        with temporary.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=fieldnames, extrasaction="ignore"
+            )
+            writer.writeheader()
+            writer.writerows(existing_rows)
+            writer.writerow(dict(row))
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_atomic_with_retry(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def broker_position_from_plain(
@@ -777,6 +826,74 @@ def _decision(
     )
 
 
+def historical_unseen_event_times(
+    event_times_utc: Iterable[str],
+    *,
+    previous_event_time_utc: str | None,
+) -> tuple[str, ...]:
+    """Return unseen actual event times before the latest current event."""
+
+    if previous_event_time_utc in (None, ""):
+        return ()
+    previous = parse_event_time(previous_event_time_utc)
+    if previous is None:
+        raise DualLiveStateError("Previous event time is invalid")
+    parsed = sorted(
+        {
+            item
+            for value in event_times_utc
+            if (item := parse_event_time(str(value))) is not None
+        }
+    )
+    if not parsed or parsed[-1] <= previous:
+        return ()
+    if previous < parsed[0]:
+        raise DualLiveStateError(
+            "Completed-bar backfill window does not include the persisted "
+            f"cursor {previous.isoformat()}; earliest fetched event is "
+            f"{parsed[0].isoformat()}"
+        )
+    unseen = [item for item in parsed if item > previous]
+    return tuple(item.isoformat() for item in unseen[:-1])
+
+
+def historical_backfill_decision(
+    state: DualLiveState,
+    *,
+    rules: StrategyRules,
+    run_id: str,
+    iteration: int,
+    event_time_utc: str,
+) -> StrategyDecision:
+    """Create a no-execution audit disposition for a missed broker bar.
+
+    The worker writes these rows for actual completed MT5 bars discovered after
+    an outage.  They never advance the strategy cursor or execute an order; the
+    latest current event remains responsible for conservative gap flattening.
+    """
+
+    validate_state(state)
+    rules.validate()
+    if parse_event_time(event_time_utc) is None:
+        raise DualLiveStateError("Historical backfill requires an event time")
+    current = int(state.virtual_position)
+    return _decision(
+        state=state,
+        rules=rules,
+        run_id=run_id,
+        iteration=iteration,
+        event_time_utc=event_time_utc,
+        probability_up=None,
+        desired=current,
+        target=current,
+        action="MODEL_UNAVAILABLE_HISTORICAL_BACKFILL",
+        reason="completed_broker_event_discovered_after_worker_outage",
+        duplicate=False,
+        gap=False,
+        stale=True,
+    )
+
+
 def decide_strategy_transition(
     state: DualLiveState,
     *,
@@ -790,6 +907,7 @@ def decide_strategy_transition(
     reconciliation_reason: str = "",
     session_gap_lockout_active: bool = False,
     session_gap_lockout_reason: str = "expected_broker_session_gap_lockout",
+    fresh_start_adopt_only: bool = False,
 ) -> StrategyDecision:
     """Apply frozen strategy and safety rules to one completed M15 event.
 
@@ -902,6 +1020,26 @@ def decide_strategy_transition(
             duplicate=(duplicate and current == 0),
             gap=gap,
             stale=stale_event_warning,
+        )
+    if fresh_start_adopt_only:
+        return _decision(
+            state=state,
+            rules=rules,
+            run_id=run_id,
+            iteration=iteration,
+            event_time_utc=event_time_utc,
+            probability_up=None,
+            desired=0,
+            target=0,
+            action=(
+                "CONTROL_FRESH_START_FLATTEN"
+                if current != 0
+                else "CONTROL_FRESH_START_BLOCK"
+            ),
+            reason="fresh_runtime_first_broker_event_adopt_only",
+            duplicate=False,
+            gap=gap,
+            stale=True,
         )
     if event is None:
         return _decision(

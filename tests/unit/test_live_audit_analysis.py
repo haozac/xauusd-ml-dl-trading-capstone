@@ -396,7 +396,7 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
             "decision_utc": snapshots,
             "model_prediction_available": prediction_available,
             "model_prediction_event_time_utc": [
-                event if available else events[30]
+                event if available else None
                 for event, available in zip(
                     events, prediction_available, strict=True
                 )
@@ -446,3 +446,7 @@ def test_acceptance_style_78_events_report_31_predictions_and_47_warmups(
     assert summary.contiguity_warmup_event_count == 46
     assert summary.model_unavailable_exposure_after_disposition_count == 0
     assert summary.maximum_gap_control_processing_delay_seconds == 1.0
+    assert (
+        summary.maximum_broker_event_to_model_prediction_lag_minutes
+        == 47 * 15
+    )

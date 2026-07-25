@@ -662,3 +662,65 @@ def test_stale_model_probability_is_not_written_as_current_prediction() -> None:
         row["model_unavailable_reason"]
         == "frozen_48_bar_contiguous_sequence_unavailable"
     )
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_trigger"),
+    [
+        ("KILL_SWITCH_FLATTEN", "CONTROL_KILL_SWITCH"),
+        ("TOTAL_STOP_FLATTEN", "CONTROL_TOTAL_STOP"),
+        ("DAILY_STOP_FLATTEN", "CONTROL_DAILY_STOP"),
+    ],
+)
+def test_risk_flatten_execution_is_classified_as_control(
+    action: str,
+    expected_trigger: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from capstone_trading.runtime.live_audit import execution_audit_rows
+
+    leg = SimpleNamespace(
+        order_event={"request": {}, "check_result": {}, "send_result": {}},
+        completed_utc="2026-07-24T12:00:01+00:00",
+        purpose="close_existing_position",
+        side="SELL",
+        position_before=1,
+        position_after=0,
+        requested_price=2400.0,
+        bid_before=2400.0,
+        ask_before=2400.1,
+        spread_points_before=10.0,
+        symbol_reported_spread_points_before=10,
+        symbol_point=0.01,
+        order_check_passed=True,
+        order_send_passed=True,
+        broker_result_price=2400.0,
+        slippage_points_signed=0.0,
+        slippage_points_adverse=0.0,
+        margin_required_account_currency=None,
+        order_ticket=10,
+        deal_ticket=20,
+        position_ticket=None,
+        request_position_ticket=30,
+        magic=26070101,
+        comment="CP_DUAL_A_RISK",
+        filling_name="IOC",
+        filling_value=1,
+        last_error=None,
+    )
+    decision = SimpleNamespace(
+        role="model_a",
+        run_id="run-1",
+        iteration=4,
+        event_time_utc="2026-07-24T12:00:00+00:00",
+        action=action,
+    )
+
+    row = execution_audit_rows(
+        execution=SimpleNamespace(legs=(leg,)),
+        decision=decision,
+    )[0]
+
+    assert row["trigger_type"] == expected_trigger
+    assert row["decision_id"].startswith(f"{expected_trigger}:")

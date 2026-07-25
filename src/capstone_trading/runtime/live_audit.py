@@ -758,13 +758,18 @@ def decision_audit_row(
 def execution_audit_rows(*, execution: Any, decision: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     action = str(getattr(decision, "action", "")).strip().upper()
+    risk_control_types = {
+        "KILL_SWITCH_FLATTEN": "CONTROL_KILL_SWITCH",
+        "TOTAL_STOP_FLATTEN": "CONTROL_TOTAL_STOP",
+        "DAILY_STOP_FLATTEN": "CONTROL_DAILY_STOP",
+    }
     inferred_control_type = (
         action
         if action.startswith("CONTROL_")
         else (
             "CONTROL_SESSION_GAP_LOCKOUT"
             if action == "SESSION_GAP_LOCKOUT_FLATTEN"
-            else None
+            else risk_control_types.get(action)
         )
     )
     trigger_type = str(

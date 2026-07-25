@@ -579,6 +579,16 @@ def _run_emergency_flatten(settings: SupervisorSettings, role: str) -> dict[str,
     }
 
 
+def formal_acceptance_gate(
+    *,
+    operational_status: str,
+    restart_events: list[Mapping[str, Any]],
+) -> bool:
+    """Formal pilot acceptance requires a clean run with zero restarts."""
+
+    return operational_status == "PASS" and not restart_events
+
+
 def run_supervisor(settings: SupervisorSettings, *, reset_control_files: bool) -> dict[str, Any]:
     settings.paths.shared_root.mkdir(parents=True, exist_ok=True)
     settings.paths.logs_root.mkdir(parents=True, exist_ok=True)
@@ -754,7 +764,12 @@ def run_supervisor(settings: SupervisorSettings, *, reset_control_files: bool) -
             "schema_version": "1.0",
             "run_id": run_id,
             "status": final_status,
-            "formal_gate": final_status == "PASS",
+            "operational_closeout_status": final_status,
+            "formal_gate": formal_acceptance_gate(
+                operational_status=final_status,
+                restart_events=restart_events,
+            ),
+            "restart_event_count": len(restart_events),
             "started_utc": started_utc,
             "completed_utc": utc_now_iso(),
             "execution_mode": settings.execution_mode,
